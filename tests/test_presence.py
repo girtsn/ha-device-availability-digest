@@ -1,8 +1,15 @@
 """Pure Python regression tests for generic Home Presence."""
 from datetime import datetime, timedelta, timezone
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 import unittest
 
-from custom_components.device_availability_digest.presence import decide_presence
+# Load the pure model without importing the Home Assistant-dependent package.
+MODEL = Path(__file__).resolve().parents[1] / "custom_components" / "device_availability_digest" / "presence.py"
+spec = spec_from_file_location("home_presence_model", MODEL)
+module = module_from_spec(spec)
+spec.loader.exec_module(module)
+decide_presence = module.decide_presence
 
 NOW = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
 
