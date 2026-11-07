@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime, timedelta
 
 import voluptuous as vol
 from homeassistant.components import websocket_api
@@ -14,6 +15,8 @@ from .const import DOMAIN
     vol.Required("type"): f"{DOMAIN}/history",
     vol.Optional("days", default=7): vol.All(vol.Coerce(int), vol.Range(min=1, max=90)),
     vol.Optional("limit", default=2500): vol.All(vol.Coerce(int), vol.Range(min=1, max=5000)),
+    vol.Optional("start_time"): str,
+    vol.Optional("end_time"): str,
 })
 @websocket_api.require_admin
 @callback
@@ -53,8 +56,25 @@ def ws_get_history(
          "since": data.get("since"), "area": data.get("area", "Unassigned")}
         for eid, data in sorted(monitor.state.pending.items())
     ]
+    if "start_time" in msg or "end_time" in msg:
+        if "start_time" not in msg or "end_time" not in msg:
+            connection.send_error(msg["id"], "invalid_dates", "Both start_time and end_time are required")
+            return
+        try:
+            start = datetime.fromisoformat(msg["start_time"].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(msg["end_time"].replace("Z", "+00:00"))
+            if (start.tzinfo is None or end.tzinfo is None
+                    or not start < end or end - start > timedelta(days=1099)):
+                raise ValueError("invalid calendar range")
+        except ValueError:
+            connection.send_error(msg["id"], "invalid_dates", "Date range must be a valid timezone-aware interval of up to three years")
+            return
+        events = monitor.history.between(start, end, msg["limit"])
+    else:
+        # Backward compatibility with v0.3.0 dashboard clients.
+        events = monitor.history.recent(msg["days"], msg["limit"])
     connection.send_result(msg["id"], {
-        "events": monitor.history.recent(msg["days"], msg["limit"]),
+        "events": events,
         "active": active,
         "pending": pending,
         "presence": hass.states.get("sensor.home_presence").state
