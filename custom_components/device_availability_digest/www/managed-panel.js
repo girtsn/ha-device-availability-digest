@@ -4,11 +4,16 @@
  */
 const version=new URL(import.meta.url).searchParams.get("v")||"dev";
 const tag="availability-diagnostics-managed-panel-v"+version.replace(/\./g,"-");
+const pickerTag="availability-date-range-picker-v"+version.replace(/\./g,"-");
 const css=`
 :host{display:block;min-height:100%;background:var(--primary-background-color,#fafafa);color:var(--primary-text-color,#202124);font-family:var(--paper-font-body1_-_font-family,Roboto,Arial,sans-serif)}
 *{box-sizing:border-box}
 .shell{max-width:1450px;margin:0 auto;padding:24px clamp(12px,3vw,30px) 45px}
-.heading{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+.heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.heading-group{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
+.ha-mobile-menu{display:none;align-items:center;justify-content:center;width:40px;height:40px;flex:0 0 40px;padding:8px;border:0;border-radius:50%;background:transparent;color:inherit;cursor:pointer}
+.ha-mobile-menu:focus-visible{outline:2px solid var(--primary-color,#03a9f4);outline-offset:2px}
+@media(max-width:870px){.ha-mobile-menu{display:inline-flex}}
 h1{font-size:29px;line-height:1.3;font-weight:600;margin:0}
 h2{font-size:19px;font-weight:600;margin:0 0 14px}
 h3{font-size:15px;font-weight:600;margin:0 0 7px}
@@ -34,7 +39,7 @@ h3{font-size:15px;font-weight:600;margin:0 0 7px}
 .search{display:block;width:100%;padding:11px;border-radius:9px;border:1px solid var(--divider-color,#ddd);background:var(--primary-background-color,#fff);color:inherit;font:inherit;margin-bottom:12px}
 .timeline{display:flex;align-items:flex-end;gap:4px;min-height:110px;overflow-x:auto;padding:7px 1px 4px;border-bottom:1px solid var(--divider-color,#ddd)}
 .barcol{min-width:9px;max-width:24px;flex:1 0 9px;display:flex;flex-direction:column;justify-content:end;height:96px}
-.bar{width:100%;border-radius:3px 3px 0 0;min-height:3px;background:var(--primary-color,#367cbb)}
+.bar{width:100%;border-radius:3px 3px 0 0;min-height:0;background:var(--primary-color,#367cbb)}
 .bar.alt{background:var(--warning-color,#e9903a)}
 .chartlabels{display:flex;justify-content:space-between;color:var(--secondary-text-color);font-size:11px;margin-top:6px}
 .event{border-top:1px solid var(--divider-color,#ddd);padding:12px 0}
@@ -67,8 +72,12 @@ const eventTitle=(e)=>{
 class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   constructor(){
     super();this.attachShadow({mode:"open"});
-    this._hass=null;this._tab="presence";this._days=7;this._data=null;
-    this._loading=false;this._error="";this._search="";this._tick=null;
+    this._hass=null;this._tab="presence";this._data=null;
+    const start=new Date();start.setHours(0,0,0,0);start.setDate(start.getDate()-6);
+    const end=new Date();end.setHours(0,0,0,0);end.setDate(end.getDate()+1);
+    this._range={start:start.toISOString(),end:end.toISOString(),preset:"last7"};
+    this._pickerReady=false;this._pickerPromise=null;this._pickerError="";
+    this._loading=false;this._reloadQueued=false;this._error="";this._search="";this._tick=null;
     this._lastLoad=0;this._route=null;this._narrow=false;this._panel=null;
   }
   set hass(v){
@@ -79,23 +88,63 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   set route(v){this._route=v;const p=(v?.path||"").split("/").filter(Boolean)[0];
     if((p==="devices"||p==="presence")&&p!==this._tab){this._tab=p;this._render();}}
   set narrow(v){this._narrow=!!v;}
+  async _ensurePicker(){
+    if(this._pickerReady||this._pickerPromise)return this._pickerPromise;
+    this._pickerPromise=import("./availability-date-range-picker.js?v="+encodeURIComponent(version))
+      .then(mod=>{
+        if(typeof mod.avPresetRange!=="function")throw Error("Date range selector unavailable");
+        this._pickerReady=true;this._pickerError="";
+        if(this.isConnected)this._render();
+      })
+      .catch(error=>{
+        this._pickerError=error?.message||String(error);
+        if(this.isConnected)this._render();
+      })
+      .finally(()=>{this._pickerPromise=null;});
+    return this._pickerPromise;
+  }
   connectedCallback(){
     this._render();
+    this._ensurePicker();
     if(this._hass)this._load();
     this._tick??=setInterval(()=>this._load(),60000);
   }
   disconnectedCallback(){if(this._tick!==null){clearInterval(this._tick);this._tick=null;}}
   async _load(){
-    if(this._loading||!this._hass?.callWS)return;
+    if(this._loading){this._reloadQueued=true;return;}
+    if(!this._hass?.callWS)return;
     this._loading=true;
+    const selected={...this._range};
     try{
       const data=await this._hass.callWS({
-        type:"device_availability_digest/history",days:this._days,limit:5000
+        type:"device_availability_digest/history",
+        start_time:selected.start,end_time:selected.end,limit:5000
       });
       if(!this.isConnected)return;
+      if(selected.start!==this._range.start||selected.end!==this._range.end){
+        this._reloadQueued=true;return;
+      }
       this._data=data;this._error="";this._lastLoad=Date.now();
     }catch(error){this._error=error?.message||String(error);}
-    finally{this._loading=false;if(this.isConnected)this._render();}
+    finally{
+      this._loading=false;
+      if(this.isConnected)this._render();
+      if(this._reloadQueued){this._reloadQueued=false;this._load();}
+    }
+  }
+  _mobileMenuButton(){
+    // HA custom sidebar panels must request navigation on mobile explicitly.
+    const button=E("button",null,"ha-mobile-menu");
+    button.type="button";button.title="Open Home Assistant menu";
+    button.setAttribute("aria-label","Open Home Assistant menu");
+    const icon=E("ha-icon");
+    icon.setAttribute("icon","mdi:menu");
+    icon.setAttribute("aria-hidden","true");
+    button.append(icon);
+    button.addEventListener("click",()=>this.dispatchEvent(
+      new Event("hass-toggle-menu",{bubbles:true,composed:true})
+    ));
+    return button;
   }
   _btn(title,active,click,cls="btn"){
     const b=E("button",title,cls);
