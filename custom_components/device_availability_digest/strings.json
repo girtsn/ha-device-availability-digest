@@ -1,0 +1,42 @@
+{
+  "title": "Device Availability Digest",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Device Availability Digest",
+        "description": "Automatically discover compatible devices and a notification target. Review the suggested notification entity, then complete setup. The old device-availability automation should be disabled first.",
+        "data": {
+          "notify_entity": "Notification entity",
+          "offline_minutes": "Offline confirmation delay (minutes)",
+          "window_minutes": "Aggregation window (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_notify": "Enter an entity ID beginning with notify."
+    },
+    "abort": {
+      "single_instance_allowed": "Device Availability Digest is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Device Availability Digest settings",
+        "description": "Advanced entity lists accept comma-separated entity IDs. Excluded device anchors exclude all entities belonging to the same registered device. Connectivity overrides use on=healthy and off=disconnected.",
+        "data": {
+          "notify_entity": "Notification entity",
+          "offline_minutes": "Offline confirmation delay (minutes)",
+          "window_minutes": "Aggregation window (minutes)",
+          "auto_exclude_tvs": "Automatically exclude TVs",
+          "excluded_entities": "Excluded entity IDs",
+          "excluded_device_entities": "Excluded device anchors (entity IDs)",
+          "connectivity_entities": "Explicit connectivity sensors (entity IDs)"
+        }
+      }
+    },
+    "error": {
+      "invalid_notify": "Enter an entity ID beginning with notify."
+    }
+  }
+}
