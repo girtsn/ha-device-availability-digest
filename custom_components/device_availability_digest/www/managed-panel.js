@@ -167,61 +167,54 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     if(detail)card.append(E("div",detail,"muted small"));
     return card;
   }
-  _chart(events,matcher,range){
-    const hourly=range===1;
-    const card=this._card(hourly?"Hourly activity":"Daily activity",12);
-    const days=Math.min(range,90),counts=[];
-    const start=new Date();
-    if(hourly){
-      start.setMinutes(0,0,0);
-      start.setHours(start.getHours()-23);
-      for(let i=0;i<24;i++){
-        const date=new Date(start);date.setHours(date.getHours()+i);
-        counts.push({date,n:0,alt:0});
-      }
-    }else{
-      start.setHours(0,0,0);
-      start.setDate(start.getDate()-(days-1));
-      for(let i=0;i<days;i++){
-        const date=new Date(start);date.setDate(date.getDate()+i);
-        counts.push({date,n:0,alt:0});
-      }
+  _chart(events,matcher){
+    const rangeStart=new Date(this._range.start),rangeEnd=new Date(this._range.end);
+    const startUTC=Date.UTC(rangeStart.getFullYear(),rangeStart.getMonth(),rangeStart.getDate());
+    const endUTC=Date.UTC(rangeEnd.getFullYear(),rangeEnd.getMonth(),rangeEnd.getDate());
+    const days=Math.max(1,Math.round((endUTC-startUTC)/86400000));
+    const unit=days===1?"hour":days<=90?"day":days<=365?"week":"month";
+    const card=this._card("Recorded "+(unit==="hour"?"hourly":unit==="day"?"daily":unit==="week"?"weekly":"monthly")+" activity",12);
+    const counts=[];
+    let cursor=new Date(rangeStart);
+    while(cursor<rangeEnd&&counts.length<150){
+      const next=new Date(cursor);
+      if(unit==="hour")next.setTime(next.getTime()+3600000);
+      else if(unit==="day")next.setDate(next.getDate()+1);
+      else if(unit==="week")next.setDate(next.getDate()+7);
+      else next.setMonth(next.getMonth()+1);
+      if(next>rangeEnd)next.setTime(rangeEnd.getTime());
+      if(next<=cursor)break;
+      counts.push({start:new Date(cursor),end:next,n:0,offline:0});
+      cursor=new Date(next);
     }
-    // Buckets use local wall-clock hours/days. The timeline tracks recorded
-    // events; it does not claim to reconstruct pre-installation history.
     for(const evt of events){
-      const d=new Date(evt.at);if(isNaN(d)||!matcher(evt))continue;
-      let index=-1;
-      if(hourly){
-        index=counts.findIndex(x=>x.date.getFullYear()===d.getFullYear()&&
-          x.date.getMonth()===d.getMonth()&&x.date.getDate()===d.getDate()&&
-          x.date.getHours()===d.getHours());
-      }else{
-        index=counts.findIndex(x=>x.date.toDateString()===d.toDateString());
-      }
-      if(index>=0){
-        counts[index].n+=1;
-        if(evt.kind==="availability_event"&&evt.event==="OFFLINE")counts[index].alt+=1;
+      const at=new Date(evt.at);
+      if(isNaN(at)||!matcher(evt))continue;
+      const bin=counts.find(x=>at>=x.start&&at<x.end);
+      if(bin){
+        bin.n++;
+        if(evt.kind==="availability_event"&&evt.event==="OFFLINE")bin.offline++;
       }
     }
     const max=Math.max(1,...counts.map(x=>x.n));
     const container=E("div",null,"timeline");
     container.setAttribute("role","img");
-    container.setAttribute("aria-label",hourly?"Hourly count of recorded events":"Daily count of recorded events");
-    for(const x of counts){
+    container.setAttribute("aria-label","Recorded events by "+unit+" over selected period");
+    for(const item of counts){
       const col=E("div",null,"barcol");
-      const bar=E("div",null,"bar"+(x.alt?" alt":""));
-      bar.style.height=Math.max(3,Math.round(x.n/max*94))+"px";
-      bar.title=(hourly?x.date.toLocaleString():x.date.toLocaleDateString())+": "+x.n+" events"+(x.alt?" ("+x.alt+" offline)":"");
+      const bar=E("div",null,"bar"+(item.offline?" alt":""));
+      bar.style.height=(item.n?Math.max(3,Math.round(item.n/max*94)):0)+"px";
+      bar.title=item.start.toLocaleString()+": "+item.n+" events"+
+        (item.offline?" ("+item.offline+" confirmed offline)":"");
       col.append(bar);container.append(col);
     }
     card.append(container);
     const labels=E("div",null,"chartlabels");
-    labels.append(E("span",hourly?counts[0]?.date.toLocaleString():counts[0]?.date.toLocaleDateString()));
-    labels.append(E("span",hourly?counts[counts.length-1]?.date.toLocaleString():counts[counts.length-1]?.date.toLocaleDateString()));
+    const format=unit==="hour"?d=>d.toLocaleString():d=>d.toLocaleDateString();
+    labels.append(E("span",format(rangeStart)),E("span",format(rangeEnd)));
     card.append(labels);
     card.append(E("div",
-      "Event counts, not device connection duration. Expand rows below for the actual entity ID and trigger.",
+      "Event counts, not device connection duration. Records are retained for up to 90 days; earlier calendar periods may be empty.",
       "muted small"));
     return card;
   }
@@ -288,7 +281,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     sources.append(E("div",
       "Only Companion App / Person location establishes Away. Wi-Fi disappearance alone does not. Source events record MAC/IP where Home Assistant exposes them; GPS coordinates are never logged.","muted small"));
     grid.append(sources);
-    grid.append(this._chart(records,e=>e.kind==="presence_state",this._days));
+    grid.append(this._chart(records,e=>e.kind==="presence_state"));
     grid.append(this._events(records.slice().reverse(),"Home Presence · state and source history"));
   }
   _devices(grid,data){
@@ -309,7 +302,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       }
     }
     grid.append(current);
-    grid.append(this._chart(records,e=>e.kind==="availability_event",this._days));
+    grid.append(this._chart(records,e=>e.kind==="availability_event"));
     grid.append(this._events(records.slice().reverse(),"Device Availability · confirmed offline/recovered history"));
   }
   _render(){
@@ -321,13 +314,28 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     const header=E("div");
     header.append(E("h1","Availability & Home Presence"));
     header.append(E("p","Device connectivity, household presence and diagnostic history","subtitle"));
-    heading.append(header);
+    const headingGroup=E("div",null,"heading-group");
+    headingGroup.append(this._mobileMenuButton(),header);
+    heading.append(headingGroup);
     const refresh=this._btn(this._loading?"Refreshing…":"Refresh",false,()=>this._load());
     refresh.disabled=this._loading;heading.append(refresh);shell.append(heading);
     const toolbar=E("div",null,"toolbar");
-    toolbar.append(E("span","Period:","muted small"));
-    for(const [days,label] of [[1,"24 hours"],[7,"7 days"],[30,"30 days"],[90,"90 days"]]){
-      toolbar.append(this._btn(label,this._days===days,()=>{this._days=days;this._search="";this._load();}));
+    if(this._pickerReady){
+      const picker=E(pickerTag);
+      picker.range=this._range;
+      picker.addEventListener("date-range-changed",event=>{
+        this._range=event.detail;
+        this._search="";
+        this._load();
+      });
+      toolbar.append(picker);
+    }else{
+      toolbar.append(E("span",this._pickerError?
+        "Date selector could not load: "+this._pickerError:
+        "Loading shared date selector…","muted small"));
+      if(this._pickerError)toolbar.append(this._btn("Retry calendar",false,()=>{
+        this._pickerError="";this._ensurePicker();
+      }));
     }
     if(this._lastLoad)toolbar.append(E("span","Updated "+new Date(this._lastLoad).toLocaleTimeString(),"muted small"));
     shell.append(toolbar);
