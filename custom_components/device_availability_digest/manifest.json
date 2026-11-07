@@ -1,0 +1,15 @@
+{
+  "domain": "device_availability_digest",
+  "name": "Device Availability Digest",
+  "version": "0.1.0",
+  "documentation": "https://github.com/girtsn/ha-device-availability-digest",
+  "issue_tracker": "https://github.com/girtsn/ha-device-availability-digest/issues",
+  "codeowners": [
+    "@girtsn"
+  ],
+  "config_flow": true,
+  "single_config_entry": true,
+  "integration_type": "helper",
+  "iot_class": "calculated",
+  "requirements": []
+}
