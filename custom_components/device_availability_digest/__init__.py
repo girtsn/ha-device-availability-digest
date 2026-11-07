@@ -51,6 +51,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(hass.bus.async_listen(EVENT_STATE_CHANGED, on_change))
     entry.async_on_unload(async_track_time_interval(hass, on_timer, timedelta(seconds=30)))
     entry.async_on_unload(entry.add_update_listener(async_update_options))
+
+    @callback
+    def on_registry_changed(_: Event) -> None:
+        monitor._representatives.clear()
+
+    entry.async_on_unload(hass.bus.async_listen("entity_registry_updated", on_registry_changed))
+    entry.async_on_unload(hass.bus.async_listen("device_registry_updated", on_registry_changed))
     if hass.state == CoreState.running:
         hass.async_create_task(monitor.reconcile())
     else:
@@ -179,7 +186,9 @@ class AvailabilityDigest:
                 score = 0
             if (score, eid) < (best_score, best or "\uffff"):
                 best, best_score = eid, score
-        self._representatives[did] = best
+        # Do not cache an empty choice: a device may add entities later.
+        if best:
+            self._representatives[did] = best
         return best
 
     def _monitored(self, eid: str, attrs: dict) -> bool:
