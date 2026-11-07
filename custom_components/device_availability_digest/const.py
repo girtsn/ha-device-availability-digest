@@ -1,6 +1,8 @@
 """Constants for Device Availability Digest."""
 DOMAIN = "device_availability_digest"
 CONF_NOTIFY = "notify_entity"
+CONF_EMAIL_SUBJECT_PREFIX = "email_subject_prefix"
+DEFAULT_EMAIL_SUBJECT_PREFIX = "[HASS]"
 CONF_OFFLINE_MINUTES = "offline_minutes"
 CONF_WINDOW_MINUTES = "window_minutes"
 CONF_EXCLUDED_ENTITIES = "excluded_entities"
