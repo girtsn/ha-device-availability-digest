@@ -6,11 +6,43 @@ or site-specific notification entity names are present in the public source.
 from __future__ import annotations
 
 from typing import Any
+import json
+import logging
+from pathlib import Path
 
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
+
+_LOGGER = logging.getLogger(__name__)
+PRIVATE_PROFILE = "device_availability_digest_profile.json"
+
+
+def _read_private_profile(filepath: str) -> dict[str, Any]:
+    """Read optional local-only defaults. Never fetch or publish them."""
+    try:
+        source = Path(filepath)
+        if not source.is_file():
+            return {}
+        with source.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            raise ValueError("Profile must contain a JSON object")
+        keys = {
+            "notify_entity", "offline_minutes", "window_minutes",
+            "excluded_entities", "excluded_device_entities",
+            "connectivity_entities", "auto_exclude_tvs",
+        }
+        result = {key: value for key, value in data.items() if key in keys}
+        for key in ("excluded_entities", "excluded_device_entities", "connectivity_entities"):
+            if key in result:
+                result[key] = _split(result[key])
+        return result
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        _LOGGER.exception("Could not read optional Device Availability Digest private profile")
+        return {}
+
 
 from .const import (
     CONF_AUTO_EXCLUDE_TVS,
@@ -92,6 +124,10 @@ class AvailabilityDigestConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
         discovered = discover_defaults(self.hass)
+        private = await self.hass.async_add_executor_job(
+            _read_private_profile, self.hass.config.path(PRIVATE_PROFILE)
+        )
+        discovered.update(private)
         if user_input is not None:
             if not user_input.get(CONF_NOTIFY, "").startswith("notify."):
                 return self.async_show_form(
