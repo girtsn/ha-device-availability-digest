@@ -49,6 +49,7 @@ class HomePresenceSensor(SensorEntity):
         self._entry_id = entry_id
         self._history = None
         self._initialised = False
+        self._labeled_cache: list[str] | None = None
         self._attr_extra_state_attributes: dict[str, Any] = {
             "tracked_people": [],
             "active_home_evidence": [],
@@ -57,7 +58,9 @@ class HomePresenceSensor(SensorEntity):
 
     @callback
     def _labeled_entities(self) -> list[str]:
-        """Read entity-level label assignments, not device labels."""
+        """Read cached entity-level labels, invalidated on registry updates."""
+        if self._labeled_cache is not None:
+            return self._labeled_cache
         registry = label_registry.async_get(self.hass)
         label_ids = {
             label.label_id
@@ -65,7 +68,8 @@ class HomePresenceSensor(SensorEntity):
             if label.name.casefold() == LABEL_NAME.casefold()
         }
         if not label_ids:
-            return []
+            self._labeled_cache = []
+            return self._labeled_cache
         result: list[str] = []
         for entry in entity_registry.async_get(self.hass).entities.values():
             if entry.disabled_by is not None or not label_ids.intersection(entry.labels):
@@ -74,7 +78,8 @@ class HomePresenceSensor(SensorEntity):
                 continue
             if entry.entity_id.split(".", 1)[0] in ALLOWED_DOMAINS:
                 result.append(entry.entity_id)
-        return sorted(result)
+        self._labeled_cache = sorted(result)
+        return self._labeled_cache
 
     @callback
     def _refresh(self) -> None:
@@ -180,6 +185,7 @@ class HomePresenceSensor(SensorEntity):
 
         @callback
         def on_registry(_: Event) -> None:
+            self._labeled_cache = None
             self._refresh()
 
         @callback
