@@ -2,7 +2,7 @@
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.2.0 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.0 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -18,7 +18,51 @@ Home Assistant integration that detects device disconnections, confirms them aft
 
 No MQTT broker, external cloud backend, tokens, or GitHub access is required at runtime.
 
-## Generic Home Presence (v0.2.0)
+## Integration-managed diagnostic dashboard (v0.3.0)
+
+**Availability** appears in the Home Assistant sidebar automatically after
+updating/restarting this integration, using the same integration-managed,
+versioned sidebar-panel pattern as the Tado X and Sauna dashboards.
+No manual Lovelace cards, resource registration or configuration.yaml entries
+are necessary. The panel is **administrator-only** because it displays
+household presence and local network identifiers.
+
+The dashboard has two tabs:
+
+- **Home Presence:** current `home / away / unknown` state, the current
+  `person.*` states (and their originating GPS device tracker where
+  available), active trusted Home-positive sources, Home/Away/Unknown
+  transitions, and each contributing source's state change. It preserves
+  `entity_id`, `source_entity_id`, MAC, IP and SSID **when available in HA**,
+  together with the prior/current state and why the aggregate state changed.
+- **Device availability:** current confirmed outages and pending
+  disconnections, searchable history of pending, short recoveries (no email),
+  confirmed OFFLINE and RECOVERED incidents, plus successful immediate-email
+  and digest-summary notifications. Cloud/API scopes and failure reasons
+  remain visible in each relevant incident.
+
+Both views offer **24 hours / 7 / 30 / 90 days**, daily activity charts,
+search by entity ID, device name, MAC/IP/SSID, and click-to-expand records.
+They use Home Assistant colors/theme, responsive cards and a versioned
+sidebar loader. Dashboard data is **read-only**: opening it does not change
+notification settings, geofencing, heating or device network access.
+
+Diagnostic events are stored in a separate **private Home Assistant storage**
+file, retained for **90 days, maximum 5,000 records**, across HA restarts.
+Old email incidents are **not backfilled** into this history; it starts from
+installation of this version. Neither source code nor public GitHub contains
+the user's event data. GPS coordinates are **never copied into the diagnostic
+log**; only HA state names (e.g. `home`/`not_home`/`work`) and source
+identifiers are logged. Home Assistant still stores its usual location data
+separately according to the user's Recorder configuration.
+
+The read API `device_availability_digest/history` is available only to
+authenticated **administrators**. When the integration is removed, its
+sidebar panel is removed too; disabling it does not erase the separately
+persisted diagnostic history.
+
+
+## Generic Home Presence (v0.2.0+)
 
 The integration also exposes **`sensor.home_presence`**, a reusable,
 read-only, vendor-neutral household presence state:
