@@ -13,7 +13,7 @@ from pathlib import Path
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 
 _LOGGER = logging.getLogger(__name__)
 PRIVATE_PROFILE = "device_availability_digest_profile.json"
@@ -142,6 +142,7 @@ class AvailabilityDigestConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="user", data_schema=_form(discovered, False))
 
     @staticmethod
+    @callback
     def async_get_options_flow(config_entry):
         return AvailabilityDigestOptionsFlow()
 
