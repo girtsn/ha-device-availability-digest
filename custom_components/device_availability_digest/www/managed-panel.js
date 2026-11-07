@@ -1,0 +1,287 @@
+/* Integration-managed Availability & Home Presence diagnostics.
+ * Uses Home Assistant theme variables, tabs and responsive cards like the
+ * managed Tado X and Tylö dashboards. Read-only, administrator-only API.
+ */
+const version=new URL(import.meta.url).searchParams.get("v")||"dev";
+const tag="availability-diagnostics-managed-panel-v"+version.replace(/\./g,"-");
+const css=`
+:host{display:block;min-height:100%;background:var(--primary-background-color,#fafafa);color:var(--primary-text-color,#202124);font-family:var(--paper-font-body1_-_font-family,Roboto,Arial,sans-serif)}
+*{box-sizing:border-box}
+.shell{max-width:1450px;margin:0 auto;padding:24px clamp(12px,3vw,30px) 45px}
+.heading{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{font-size:29px;line-height:1.3;font-weight:600;margin:0}
+h2{font-size:19px;font-weight:600;margin:0 0 14px}
+h3{font-size:15px;font-weight:600;margin:0 0 7px}
+.subtitle,.muted{color:var(--secondary-text-color,#777)}
+.subtitle{margin:6px 0 2px;font-size:14px}
+.toolbar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:21px 0 16px}
+.btn,.tab{font:inherit;border:1px solid var(--divider-color,#d7d7d7);background:var(--card-background-color,#fff);color:var(--primary-text-color);border-radius:10px;padding:9px 15px;cursor:pointer}
+.btn[aria-pressed=true],.tab[aria-selected=true]{color:var(--primary-color,#1769aa);border-color:var(--primary-color,#1769aa);background:var(--secondary-background-color,#f1f6fa);font-weight:600}
+.btn:hover,.tab:hover{border-color:var(--primary-color,#1769aa)}
+.tabs{display:flex;gap:9px;border-bottom:1px solid var(--divider-color,#ddd);padding-bottom:11px}
+.tab{border-radius:9px}
+.card{background:var(--card-background-color,#fff);border:1px solid var(--divider-color,#ddd);border-radius:14px;padding:20px;min-width:0}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;margin-top:16px}
+.span4{grid-column:span 4}.span6{grid-column:span 6}.span8{grid-column:span 8}.span12{grid-column:span 12}
+.stat{font-size:31px;font-weight:650;margin-top:6px}
+.badge{display:inline-block;padding:4px 10px;border-radius:99px;background:var(--secondary-background-color,#eee);color:var(--primary-text-color);font-size:12px;font-weight:600}
+.badge.home,.badge.recovered{background:#e4f3e9;color:#1a743c}
+.badge.away,.badge.offline{background:#fff0e8;color:#a34315}
+.badge.unknown{background:#f6f0df;color:#7b6420}
+.pills{display:flex;flex-wrap:wrap;gap:8px}
+.pill{font-size:12px;border-radius:6px;padding:6px 8px;background:var(--secondary-background-color,#efefef);overflow-wrap:anywhere}
+.small{font-size:12px}.error{color:var(--error-color,#b33);margin:12px 0;white-space:pre-wrap}
+.search{display:block;width:100%;padding:11px;border-radius:9px;border:1px solid var(--divider-color,#ddd);background:var(--primary-background-color,#fff);color:inherit;font:inherit;margin-bottom:12px}
+.timeline{display:flex;align-items:flex-end;gap:4px;min-height:110px;overflow-x:auto;padding:7px 1px 4px;border-bottom:1px solid var(--divider-color,#ddd)}
+.barcol{min-width:9px;max-width:24px;flex:1 0 9px;display:flex;flex-direction:column;justify-content:end;height:96px}
+.bar{width:100%;border-radius:3px 3px 0 0;min-height:3px;background:var(--primary-color,#367cbb)}
+.bar.alt{background:var(--warning-color,#e9903a)}
+.chartlabels{display:flex;justify-content:space-between;color:var(--secondary-text-color);font-size:11px;margin-top:6px}
+.event{border-top:1px solid var(--divider-color,#ddd);padding:12px 0}
+.event summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.event summary::-webkit-details-marker{display:none}
+.eventtitle{display:flex;gap:9px;align-items:center;flex-wrap:wrap;min-width:0}
+.eventname{font-weight:600;overflow-wrap:anywhere}
+.time{flex:0 0 auto;color:var(--secondary-text-color);font-size:12px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;padding:12px;background:var(--secondary-background-color,#f4f4f4);border-radius:8px;font-size:12px;max-height:430px;overflow-y:auto}
+.empty{padding:24px 5px;color:var(--secondary-text-color);text-align:center}
+.foot{color:var(--secondary-text-color);font-size:12px;margin:24px 0}
+.statusrow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+a{color:var(--primary-color,#2673bc)}
+@media(max-width:950px){.span4,.span6,.span8{grid-column:span 12}.shell{padding-top:17px}}
+`;
+const E=(name,text,className)=>{
+  const el=document.createElement(name);
+  if(text!==undefined&&text!==null)el.textContent=String(text);
+  if(className)el.className=className;
+  return el;
+};
+const fmt=(ts)=>{if(!ts)return "—";const d=new Date(ts);return isNaN(d)?String(ts):d.toLocaleString();};
+const statusClass=(s)=>String(s||"").toLowerCase();
+const eventTitle=(e)=>{
+  if(e.kind==="presence_state")return "Household: "+(e.previous??"initial")+" → "+(e.state??"unknown");
+  if(e.kind==="presence_source")return (e.name||e.entity_id||"Source")+": "+(e.previous??"unknown")+" → "+(e.state??"unknown");
+  return (e.event||"AVAILABILITY")+": "+(e.name||e.entity_id||"device");
+};
+class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
+  constructor(){
+    super();this.attachShadow({mode:"open"});
+    this._hass=null;this._tab="presence";this._days=7;this._data=null;
+    this._loading=false;this._error="";this._search="";this._tick=null;
+    this._lastLoad=0;this._route=null;this._narrow=false;this._panel=null;
+  }
+  set hass(v){
+    this._hass=v;
+    if(this.isConnected && !this._data && !this._loading)this._load();
+  }
+  set panel(v){this._panel=v;}
+  set route(v){this._route=v;const p=(v?.path||"").split("/").filter(Boolean)[0];
+    if((p==="devices"||p==="presence")&&p!==this._tab){this._tab=p;this._render();}}
+  set narrow(v){this._narrow=!!v;}
+  connectedCallback(){
+    this._render();
+    if(this._hass)this._load();
+    this._tick??=setInterval(()=>this._load(),60000);
+  }
+  disconnectedCallback(){if(this._tick!==null){clearInterval(this._tick);this._tick=null;}}
+  async _load(){
+    if(this._loading||!this._hass?.callWS)return;
+    this._loading=true;
+    try{
+      const data=await this._hass.callWS({
+        type:"device_availability_digest/history",days:this._days,limit:5000
+      });
+      if(!this.isConnected)return;
+      this._data=data;this._error="";this._lastLoad=Date.now();
+    }catch(error){this._error=error?.message||String(error);}
+    finally{this._loading=false;if(this.isConnected)this._render();}
+  }
+  _btn(title,active,click,cls="btn"){
+    const b=E("button",title,cls);
+    b.type="button";
+    b.setAttribute(cls==="tab"?"aria-selected":"aria-pressed",active?"true":"false");
+    b.onclick=click;return b;
+  }
+  _card(title,span=12){
+    const div=E("section",null,"card span"+span);
+    if(title)div.append(E("h2",title));
+    return div;
+  }
+  _badge(value){
+    return E("span",String(value??"unknown"),"badge "+statusClass(value));
+  }
+  _stat(title,value,detail){
+    const card=this._card(null,4);
+    card.append(E("div",title,"muted"));
+    card.append(E("div",value,"stat"));
+    if(detail)card.append(E("div",detail,"muted small"));
+    return card;
+  }
+  _chart(events,matcher,range){
+    const card=this._card("Daily activity",12);
+    const days=Math.min(range,90),counts=[];
+    const day0=new Date();day0.setHours(0,0,0,0);
+    for(let i=days-1;i>=0;i--){const date=new Date(day0);date.setDate(date.getDate()-i);
+      counts.push({key:date.toLocaleDateString("en-CA"),date,n:0,alt:0});}
+    // Compare calendar dates in the viewer's timezone, not in UTC.
+    for(const evt of events){
+      const d=new Date(evt.at);if(isNaN(d))continue;
+      const key=d.toLocaleDateString("en-CA");
+      const item=counts.find(x=>x.key===key);
+      if(item&&matcher(evt)) {
+        item.n+=1;
+        if(evt.kind==="availability_event"&&evt.event==="OFFLINE")item.alt+=1;
+      }
+    }
+    const max=Math.max(1,...counts.map(x=>x.n));
+    const container=E("div",null,"timeline");
+    container.setAttribute("role","img");
+    container.setAttribute("aria-label","Daily count of recorded events");
+    for(const x of counts){
+      const col=E("div",null,"barcol");
+      const bar=E("div",null,"bar"+(x.alt?" alt":""));
+      bar.style.height=Math.max(3,Math.round(x.n/max*94))+"px";
+      bar.title=x.date.toLocaleDateString()+": "+x.n+" events"+(x.alt?" ("+x.alt+" offline)":"");
+      col.append(bar);container.append(col);
+    }
+    card.append(container);
+    const labels=E("div",null,"chartlabels");
+    labels.append(E("span",counts[0]?.date.toLocaleDateString()||""));
+    labels.append(E("span",counts[counts.length-1]?.date.toLocaleDateString()||""));
+    card.append(labels);
+    card.append(E("div",
+      "Event counts, not device connection duration. Expand rows below for the actual entity ID and trigger.",
+      "muted small"));
+    return card;
+  }
+  _events(list,label){
+    const card=this._card(label,12);
+    const inp=E("input",null,"search");inp.type="search";
+    inp.placeholder="Filter by entity ID, device, MAC, IP, status or reason";
+    inp.value=this._search;
+    inp.onchange=()=>{this._search=inp.value.toLowerCase().trim();this._render();};
+    card.append(inp);
+    const matches=list.filter(x=>!this._search ||
+      JSON.stringify(x).toLowerCase().includes(this._search));
+    card.append(E("div",matches.length+" events shown · select an event for full diagnostic details",
+      "muted small"));
+    if(!matches.length)card.append(E("div","No matching events in the selected period.","empty"));
+    for(const event of matches.slice(0,750)){
+      const details=E("details",null,"event");
+      const summary=E("summary");
+      const left=E("span",null,"eventtitle");
+      const badge=event.kind==="availability_event"?event.event:
+        event.kind==="presence_state"?"STATE":"SOURCE";
+      left.append(this._badge(badge));
+      left.append(E("span",eventTitle(event),"eventname"));
+      summary.append(left,E("time",fmt(event.at),"time"));
+      details.append(summary);
+      const display={...event};
+      if(!display.mac)delete display.mac;if(!display.ip)delete display.ip;
+      if(!display.ssid)delete display.ssid;
+      details.append(E("pre",JSON.stringify(display,null,2)));
+      card.append(details);
+    }
+    if(matches.length>750)
+      card.append(E("div","Showing the latest 750 matching events. Narrow the date range or search for specific IDs.","muted small"));
+    return card;
+  }
+  _presence(grid,data){
+    const current=this._hass?.states?.["sensor.home_presence"];
+    const status=current?.state||data.presence||"unknown";
+    const records=(data.events||[]).filter(x=>x.kind?.startsWith("presence_"));
+    const people=current?.attributes?.tracked_people||[];
+    const evidence=current?.attributes?.active_home_evidence||[];
+    grid.append(this._stat("Household presence",status,"home / away / unknown"));
+    grid.append(this._stat("Tracked people",people.length,"Person location entities"));
+    grid.append(this._stat("Positive Home sources",evidence.length,"Trusted labeled signals currently confirming Home"));
+    const sources=this._card("Current evidence",12);
+    sources.append(E("h3","People / Companion App GPS"));
+    if(!people.length)sources.append(E("div","No Person locations configured; Away is intentionally blocked.","muted"));
+    const peopleBox=E("div",null,"pills");
+    for(const id of people){
+      const p=this._hass?.states?.[id];
+      peopleBox.append(E("div",id+" · "+(p?.state??"unknown")+
+        (p?.attributes?.source?" · via "+p.attributes.source:""),"pill"));
+    }
+    sources.append(peopleBox);
+    sources.append(E("h3","Positive evidence · Home Presence label"));
+    if(!evidence.length)sources.append(E("div","No additional source currently confirms Home.","muted"));
+    const active=E("div",null,"pills");
+    for(const id of evidence){
+      const s=this._hass?.states?.[id],a=s?.attributes||{};
+      const parts=[id,s?.state||"unknown",a.ip&&"IP "+a.ip,a.mac&&"MAC "+a.mac];
+      active.append(E("div",parts.filter(Boolean).join(" · "),"pill"));
+    }
+    sources.append(active);
+    sources.append(E("div",
+      "Only Companion App / Person location establishes Away. Wi-Fi disappearance alone does not. Source events record MAC/IP where Home Assistant exposes them; GPS coordinates are never logged.","muted small"));
+    grid.append(sources);
+    grid.append(this._chart(records,e=>e.kind==="presence_state",this._days));
+    grid.append(this._events(records.slice().reverse(),"Home Presence · state and source history"));
+  }
+  _devices(grid,data){
+    const active=data.active||[],pending=data.pending||[];
+    const records=(data.events||[]).filter(x=>x.kind==="availability_event");
+    const offline=records.filter(x=>x.event==="OFFLINE").length;
+    grid.append(this._stat("Currently offline",active.length,"Confirmed outages"));
+    grid.append(this._stat("Pending confirmation",pending.length,"Within the offline grace period"));
+    grid.append(this._stat("Offline events",offline,"In the selected time range"));
+    const current=this._card("Current outages & pending devices",12);
+    if(!active.length&&!pending.length)current.append(E("div","No open outages or pending disconnections.","empty"));
+    for(const [status,items] of [["OFFLINE",active],["PENDING",pending]]){
+      for(const item of items){
+        const d=E("details",null,"event"),s=E("summary"),left=E("span",null,"eventtitle");
+        left.append(this._badge(status),E("span",item.name||item.entity_id,"eventname"));
+        s.append(left,E("span","Since "+fmt(item.since),"time"));
+        d.append(s,E("pre",JSON.stringify(item,null,2)));current.append(d);
+      }
+    }
+    grid.append(current);
+    grid.append(this._chart(records,e=>e.kind==="availability_event",this._days));
+    grid.append(this._events(records.slice().reverse(),"Device Availability · confirmed offline/recovered history"));
+  }
+  _render(){
+    if(!this.isConnected)return;
+    const root=this.shadowRoot;
+    root.replaceChildren(E("style",css));
+    const shell=E("div",null,"shell");
+    const heading=E("div",null,"heading");
+    const header=E("div");
+    header.append(E("h1","Availability & Home Presence"));
+    header.append(E("p","Device connectivity, household presence and diagnostic history","subtitle"));
+    heading.append(header);
+    const refresh=this._btn(this._loading?"Refreshing…":"Refresh",false,()=>this._load());
+    refresh.disabled=this._loading;heading.append(refresh);shell.append(heading);
+    const toolbar=E("div",null,"toolbar");
+    toolbar.append(E("span","Period:","muted small"));
+    for(const [days,label] of [[1,"24 hours"],[7,"7 days"],[30,"30 days"],[90,"90 days"]]){
+      toolbar.append(this._btn(label,this._days===days,()=>{this._days=days;this._search="";this._load();}));
+    }
+    if(this._lastLoad)toolbar.append(E("span","Updated "+new Date(this._lastLoad).toLocaleTimeString(),"muted small"));
+    shell.append(toolbar);
+    const tabs=E("div",null,"tabs");
+    tabs.setAttribute("role","tablist");
+    tabs.append(this._btn("Home Presence",this._tab==="presence",()=>{
+      this._tab="presence";this._search="";this._render();
+    },"tab"));
+    tabs.append(this._btn("Device availability",this._tab==="devices",()=>{
+      this._tab="devices";this._search="";this._render();
+    },"tab"));
+    shell.append(tabs);
+    if(this._error)shell.append(E("p",this._error,"error"));
+    if(!this._data)shell.append(E("div",this._loading?"Loading diagnostic history…":"No diagnostics available yet.","empty"));
+    else{
+      const grid=E("main",null,"grid");
+      if(this._tab==="presence")this._presence(grid,this._data);
+      else this._devices(grid,this._data);
+      shell.append(grid);
+    }
+    shell.append(E("p",
+      "Read-only dashboard · 90-day retention (maximum 5,000 events) · Administrator access · History begins with this integration version. Diagnostic events persist across Home Assistant restarts; this view does not change device settings or send messages.",
+      "foot"));
+    root.append(shell);
+  }
+}
+if(!customElements.get(tag))
+  customElements.define(tag,AvailabilityDiagnosticsManagedPanel);
