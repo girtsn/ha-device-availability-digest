@@ -63,8 +63,12 @@ const E=(name,text,className)=>{
 };
 const fmt=(ts)=>{if(!ts)return "—";const d=new Date(ts);return isNaN(d)?String(ts):d.toLocaleString();};
 const statusClass=(s)=>String(s||"").toLowerCase();
+const isSourceDetails=e=>e.kind==="presence_details"||
+  (e.kind==="presence_source"&&e.previous!=null&&e.previous===e.state);
 const eventTitle=(e)=>{
   if(e.kind==="presence_state")return "Household: "+(e.previous??"initial")+" → "+(e.state??"unknown");
+  if(isSourceDetails(e))return "Source details updated: "+(e.name||e.entity_id||"Source")+
+    " (still "+(e.state??"unknown")+")";
   if(e.kind==="presence_source")return (e.name||e.entity_id||"Source")+": "+(e.previous??"unknown")+" → "+(e.state??"unknown");
   if(e.kind==="availability_digest")return "Email sent: "+(e.title||e.event||"Availability summary");
   return (e.event||"AVAILABILITY")+": "+(e.name||e.entity_id||"device");
@@ -235,7 +239,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       const summary=E("summary");
       const left=E("span",null,"eventtitle");
       const badge=event.kind==="availability_event"||event.kind==="availability_digest"?event.event:
-        event.kind==="presence_state"?"STATE":"SOURCE";
+        event.kind==="presence_state"?"STATE":isSourceDetails(event)?"DETAILS":"SOURCE";
       left.append(this._badge(badge));
       left.append(E("span",eventTitle(event),"eventname"));
       summary.append(left,E("time",fmt(event.at),"time"));
@@ -282,7 +286,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       "Only Companion App / Person location establishes Away. Wi-Fi disappearance alone does not. Source events record MAC/IP where Home Assistant exposes them; GPS coordinates are never logged.","muted small"));
     grid.append(sources);
     grid.append(this._chart(records,e=>e.kind==="presence_state"));
-    grid.append(this._events(records.slice().reverse(),"Home Presence · state and source history"));
+    grid.append(this._events(records.slice().reverse(),"Home Presence · state changes and source diagnostics"));
   }
   _devices(grid,data){
     const active=data.active||[],pending=data.pending||[];
