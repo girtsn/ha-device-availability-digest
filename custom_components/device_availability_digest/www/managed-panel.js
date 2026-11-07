@@ -119,36 +119,57 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     return card;
   }
   _chart(events,matcher,range){
-    const card=this._card("Daily activity",12);
+    const hourly=range===1;
+    const card=this._card(hourly?"Hourly activity":"Daily activity",12);
     const days=Math.min(range,90),counts=[];
-    const day0=new Date();day0.setHours(0,0,0,0);
-    for(let i=days-1;i>=0;i--){const date=new Date(day0);date.setDate(date.getDate()-i);
-      counts.push({key:date.toLocaleDateString("en-CA"),date,n:0,alt:0});}
-    // Compare calendar dates in the viewer's timezone, not in UTC.
+    const start=new Date();
+    if(hourly){
+      start.setMinutes(0,0,0);
+      start.setHours(start.getHours()-23);
+      for(let i=0;i<24;i++){
+        const date=new Date(start);date.setHours(date.getHours()+i);
+        counts.push({date,n:0,alt:0});
+      }
+    }else{
+      start.setHours(0,0,0);
+      start.setDate(start.getDate()-(days-1));
+      for(let i=0;i<days;i++){
+        const date=new Date(start);date.setDate(date.getDate()+i);
+        counts.push({date,n:0,alt:0});
+      }
+    }
+    // Buckets use local wall-clock hours/days. The timeline tracks recorded
+    // events; it does not claim to reconstruct pre-installation history.
     for(const evt of events){
-      const d=new Date(evt.at);if(isNaN(d))continue;
-      const key=d.toLocaleDateString("en-CA");
-      const item=counts.find(x=>x.key===key);
-      if(item&&matcher(evt)) {
-        item.n+=1;
-        if(evt.kind==="availability_event"&&evt.event==="OFFLINE")item.alt+=1;
+      const d=new Date(evt.at);if(isNaN(d)||!matcher(evt))continue;
+      let index=-1;
+      if(hourly){
+        index=counts.findIndex(x=>x.date.getFullYear()===d.getFullYear()&&
+          x.date.getMonth()===d.getMonth()&&x.date.getDate()===d.getDate()&&
+          x.date.getHours()===d.getHours());
+      }else{
+        index=counts.findIndex(x=>x.date.toDateString()===d.toDateString());
+      }
+      if(index>=0){
+        counts[index].n+=1;
+        if(evt.kind==="availability_event"&&evt.event==="OFFLINE")counts[index].alt+=1;
       }
     }
     const max=Math.max(1,...counts.map(x=>x.n));
     const container=E("div",null,"timeline");
     container.setAttribute("role","img");
-    container.setAttribute("aria-label","Daily count of recorded events");
+    container.setAttribute("aria-label",hourly?"Hourly count of recorded events":"Daily count of recorded events");
     for(const x of counts){
       const col=E("div",null,"barcol");
       const bar=E("div",null,"bar"+(x.alt?" alt":""));
       bar.style.height=Math.max(3,Math.round(x.n/max*94))+"px";
-      bar.title=x.date.toLocaleDateString()+": "+x.n+" events"+(x.alt?" ("+x.alt+" offline)":"");
+      bar.title=(hourly?x.date.toLocaleString():x.date.toLocaleDateString())+": "+x.n+" events"+(x.alt?" ("+x.alt+" offline)":"");
       col.append(bar);container.append(col);
     }
     card.append(container);
     const labels=E("div",null,"chartlabels");
-    labels.append(E("span",counts[0]?.date.toLocaleDateString()||""));
-    labels.append(E("span",counts[counts.length-1]?.date.toLocaleDateString()||""));
+    labels.append(E("span",hourly?counts[0]?.date.toLocaleString():counts[0]?.date.toLocaleDateString()));
+    labels.append(E("span",hourly?counts[counts.length-1]?.date.toLocaleString():counts[counts.length-1]?.date.toLocaleDateString()));
     card.append(labels);
     card.append(E("div",
       "Event counts, not device connection duration. Expand rows below for the actual entity ID and trigger.",
