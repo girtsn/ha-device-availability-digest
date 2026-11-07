@@ -50,6 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_STATE_CHANGED, on_change))
     entry.async_on_unload(async_track_time_interval(hass, on_timer, timedelta(seconds=30)))
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
     if hass.state == CoreState.running:
         hass.async_create_task(monitor.reconcile())
     else:
@@ -59,6 +60,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, on_started))
     return True
+
+
+async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload after changes in the UI options flow."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
