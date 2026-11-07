@@ -1,15 +1,15 @@
 {
   "domain": "device_availability_digest",
   "name": "Device Availability Digest",
-  "version": "0.1.1",
-  "documentation": "https://github.com/girtsn/ha-device-availability-digest",
-  "issue_tracker": "https://github.com/girtsn/ha-device-availability-digest/issues",
   "codeowners": [
     "@girtsn"
   ],
   "config_flow": true,
-  "single_config_entry": true,
+  "documentation": "https://github.com/girtsn/ha-device-availability-digest",
   "integration_type": "service",
   "iot_class": "calculated",
-  "requirements": []
+  "issue_tracker": "https://github.com/girtsn/ha-device-availability-digest/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.1"
 }
