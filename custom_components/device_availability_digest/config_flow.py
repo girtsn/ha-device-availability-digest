@@ -145,7 +145,7 @@ class AvailabilityDigestConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return AvailabilityDigestOptionsFlow()
 
 
-class AvailabilityDigestOptionsFlow(config_entries.OptionsFlowWithReload):
+class AvailabilityDigestOptionsFlow(config_entries.OptionsFlow):
     """Fine-tune defaults, exclusions and explicit connectivity sensors."""
 
     async def async_step_init(self, user_input: dict | None = None):
