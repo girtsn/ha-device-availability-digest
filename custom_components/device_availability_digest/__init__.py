@@ -23,6 +23,7 @@ from .const import (
     CONF_NOTIFY, CONF_OFFLINE_MINUTES, CONF_WINDOW_MINUTES,
     CONF_EXCLUDED_ENTITIES, CONF_EXCLUDED_DEVICE_ANCHORS,
     CONF_CONNECTIVITY_ENTITIES, CONF_AUTO_EXCLUDE_TVS,
+    CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX,
 )
 from .model import AvailabilityState, parse, utcnow
 
@@ -89,6 +90,7 @@ class AvailabilityDigest:
     def __init__(self, hass: HomeAssistant, options: dict) -> None:
         self.hass = hass
         self.notify_entity = options[CONF_NOTIFY]
+        self.subject_prefix = str(options.get(CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX)).strip()
         self.delay = timedelta(minutes=options[CONF_OFFLINE_MINUTES])
         self.window = timedelta(minutes=options[CONF_WINDOW_MINUTES])
         self.excluded_entities = set(options.get(CONF_EXCLUDED_ENTITIES, []))
@@ -326,6 +328,10 @@ class AvailabilityDigest:
             _LOGGER.exception("Device availability digest email failed; will retry")
             return False
 
+    def _subject(self, detail: str) -> str:
+        """Prepend the UI-configured subject label without double spaces."""
+        return f"{self.subject_prefix} {detail}".strip()
+
     def _when(self, ts: str) -> str:
         return dt_util.as_local(parse(ts)).strftime("%Y-%m-%d %H:%M:%S %Z")
 
@@ -338,7 +344,7 @@ class AvailabilityDigest:
             return
         first = outages[0]
         suffix = f" (+{len(outages) - 1} other outages)" if len(outages) > 1 else ""
-        title = f"[HASS] OFFLINE: {first['name']}{suffix}"
+        title = self._subject(f"OFFLINE: {first['name']}{suffix}")
         message = (f"Confirmed offline for at least {int(self.delay.total_seconds() / 60)} minutes: "
                    f"{first['name']} ({first['area']})\n"
                    f"Entity: {first['entity_id']}\n"
@@ -358,8 +364,10 @@ class AvailabilityDigest:
         recoveries = [e for e in events if e["kind"] == "RECOVERED"]
         involved = {e["entity_id"] for e in events}
         outstanding = involved & self.state.active.keys()
-        title = (f"[HASS] AVAILABILITY SUMMARY: {len(involved)} monitored items; "
-                 f"{len(outstanding)} still offline")
+        title = self._subject(
+            f"AVAILABILITY SUMMARY: {len(involved)} monitored items; "
+            f"{len(outstanding)} still offline"
+        )
         lines = [
             f"Window: {self._when(batch['opened'])} to {self._when(batch['deadline'])}",
             f"Confirmed offline events: {len(outages)}",
