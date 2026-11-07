@@ -34,6 +34,9 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # GitHub repository topics require one-time setup in About.
+          # Remove this exception after topics have been added.
+          ignore: topics
 
   hassfest:
     runs-on: ubuntu-latest
