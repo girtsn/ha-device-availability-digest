@@ -1,0 +1,42 @@
+{
+  "title": "Device Availability Digest",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Device Availability Digest",
+        "description": "Discover devices automatically; confirm the notification target and timing.",
+        "data": {
+          "notify_entity": "Notification entity",
+          "offline_minutes": "Offline confirmation delay (minutes)",
+          "window_minutes": "Aggregation window (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_notify": "Enter an entity ID beginning with notify."
+    },
+    "abort": {
+      "single_instance_allowed": "This integration is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Device Availability Digest settings",
+        "description": "Lists accept comma-separated entity IDs; device anchors exclude every entity in that device.",
+        "data": {
+          "notify_entity": "Notification entity",
+          "offline_minutes": "Offline confirmation delay (minutes)",
+          "window_minutes": "Aggregation window (minutes)",
+          "auto_exclude_tvs": "Automatically exclude TVs",
+          "excluded_entities": "Excluded entity IDs",
+          "excluded_device_entities": "Excluded device anchors",
+          "connectivity_entities": "Explicit connectivity sensors"
+        }
+      }
+    },
+    "error": {
+      "invalid_notify": "Enter an entity ID beginning with notify."
+    }
+  }
+}
