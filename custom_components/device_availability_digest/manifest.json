@@ -5,15 +5,15 @@
     "@girtsn"
   ],
   "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend"
+  ],
   "documentation": "https://github.com/girtsn/ha-device-availability-digest",
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/girtsn/ha-device-availability-digest/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.3.0",
-  "dependencies": [
-    "http",
-    "frontend"
-  ]
+  "version": "0.3.0"
 }
