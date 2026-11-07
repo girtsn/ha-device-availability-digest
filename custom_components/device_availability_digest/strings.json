@@ -7,6 +7,7 @@
         "description": "Automatically discover compatible devices and a notification target. Review the suggested notification entity, then complete setup. The old device-availability automation should be disabled first.",
         "data": {
           "notify_entity": "Notification entity",
+          "email_subject_prefix": "Email subject prefix (e.g. [HASS])",
           "offline_minutes": "Offline confirmation delay (minutes)",
           "window_minutes": "Aggregation window (minutes)"
         }
@@ -26,6 +27,7 @@
         "description": "Advanced entity lists accept comma-separated entity IDs. Excluded device anchors exclude all entities belonging to the same registered device. Connectivity overrides use on=healthy and off=disconnected.",
         "data": {
           "notify_entity": "Notification entity",
+          "email_subject_prefix": "Email subject prefix (e.g. [HASS])",
           "offline_minutes": "Offline confirmation delay (minutes)",
           "window_minutes": "Aggregation window (minutes)",
           "auto_exclude_tvs": "Automatically exclude TVs",
