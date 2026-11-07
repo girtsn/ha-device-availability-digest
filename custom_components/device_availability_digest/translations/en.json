@@ -7,6 +7,7 @@
         "description": "Discover devices automatically; confirm the notification target and timing.",
         "data": {
           "notify_entity": "Notification entity",
+          "email_subject_prefix": "Email subject prefix (e.g. [HASS])",
           "offline_minutes": "Offline confirmation delay (minutes)",
           "window_minutes": "Aggregation window (minutes)"
         }
@@ -26,6 +27,7 @@
         "description": "Lists accept comma-separated entity IDs; device anchors exclude every entity in that device.",
         "data": {
           "notify_entity": "Notification entity",
+          "email_subject_prefix": "Email subject prefix (e.g. [HASS])",
           "offline_minutes": "Offline confirmation delay (minutes)",
           "window_minutes": "Aggregation window (minutes)",
           "auto_exclude_tvs": "Automatically exclude TVs",
