@@ -169,12 +169,22 @@ class HomePresenceSensor(SensorEntity):
                 source_eid = str(attrs.get("source") or "") if eid.startswith("person.") else eid
                 source = self.hass.states.get(source_eid)
                 source_attrs = dict(source.attributes) if source else {}
+                # A change to MAC, IP, SSID or GPS source is diagnostic
+                # information, not a transition from home -> home.
+                is_transition = before != after
+                changed_details = {
+                    key: {"before": old_attrs.get(key), "after": attrs.get(key)}
+                    for key in keys if old_attrs.get(key) != attrs.get(key)
+                }
                 self.hass.async_create_task(self._history.record(
-                    "presence_source",
+                    "presence_source" if is_transition else "presence_details",
                     entity_id=eid,
                     source_entity_id=source_eid or None,
-                    previous=before,
+                    previous=before if is_transition else None,
                     state=after,
+                    reason=("Location or presence state changed" if is_transition
+                            else "Connection or location-source details updated; presence unchanged"),
+                    changed_details=changed_details if changed_network else {},
                     name=str(attrs.get("friendly_name") or eid),
                     mac=attrs.get("mac") or source_attrs.get("mac"),
                     ip=attrs.get("ip") or source_attrs.get("ip"),
