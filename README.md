@@ -13,7 +13,7 @@ Home Assistant integration that detects device disconnections, confirms them aft
 - **Auto-select one representative entity per registered device** and prefer standard `binary_sensor` entities whose `device_class` is `connectivity`. Supports manual connectivity overrides.
 - **Monitor multiple cloud/API connection statuses on the same device:** API sensors with `connectivity_scope` equal to `main_api` or `settings_api`, plus `tado_home_id`, are tracked independently.
 - **TV filtering:** TV-like devices are ignored by default to avoid normal power-off notifications; adjustable in Options.
-- **User-selectable `notify.*` target**, exclusions, periods and connectivity overrides through the Home Assistant UI.
+- **User-selectable `notify.*` target, email subject prefix**, exclusions, periods and connectivity overrides through the Home Assistant UI.
 - **Optional private profile import** to prefill your exact site-specific entity IDs without publishing them.
 
 No MQTT broker, external cloud backend, tokens, or GitHub access is required at runtime.
@@ -92,3 +92,11 @@ For a live smoke test: disconnect a non-critical sensor for more than five minut
 Issues and feature requests: https://github.com/girtsn/ha-device-availability-digest/issues
 
 MIT license.
+
+## Subject prefixes and tagged releases
+
+The initial setup and **Configure / Options** UI provide an **Email subject prefix**. The default is `[HASS]`; for example, `[House]` produces `[House] OFFLINE: Device` and `[House] AVAILABILITY SUMMARY: ...`. Leave the prefix blank for unprefixed subjects. A local private profile can set `"email_subject_prefix": "[House]"` to prefill the value.
+
+The repository uses the same GitHub Release model as Renson Sense and Tylö Sauna: bump the `version` in `custom_components/device_availability_digest/manifest.json`, optionally add `RELEASE_NOTES_<version>.md`, and push to `main`. After successful CI validation of **the current main commit**, the workflow publishes the matching `v<version>` tag and GitHub Release for HACS; it skips versions already released and stale workflow runs. No ZIP asset is required.
+
+One-time GitHub metadata: set repository topics such as `home-assistant`, `hacs`, `home-assistant-custom-component`, and `device-monitoring` in the repository's **About** section. The HACS validation workflow temporarily ignores the repository-topic check until topics are added; other checks remain active.
