@@ -61,6 +61,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(hass.bus.async_listen("entity_registry_updated", on_registry_changed))
     entry.async_on_unload(hass.bus.async_listen("device_registry_updated", on_registry_changed))
+    # Reusable read-only household presence sensor. Separate from the
+    # notification monitor; it must not issue actions on consumer devices.
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+
     if hass.state == CoreState.running:
         hass.async_create_task(monitor.reconcile())
     else:
@@ -78,7 +82,9 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Remove listeners when integration is disabled or reconfigured."""
+    """Unload the presence sensor and notification listeners."""
+    if not await hass.config_entries.async_unload_platforms(entry, ["sensor"]):
+        return False
     monitor = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if monitor:
         monitor.started = False
