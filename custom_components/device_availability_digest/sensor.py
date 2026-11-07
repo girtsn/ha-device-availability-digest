@@ -18,6 +18,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .presence import DEFAULT_AWAY_DELAY, decide_presence
+from .const import DOMAIN
 
 LABEL_NAME = "Home Presence"
 ALLOWED_DOMAINS = {"device_tracker", "binary_sensor", "input_boolean", "sensor"}
@@ -29,7 +30,7 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Expose a separate, read-only Home Presence status."""
-    async_add_entities([HomePresenceSensor()])
+    async_add_entities([HomePresenceSensor(entry.entry_id)])
 
 
 class HomePresenceSensor(SensorEntity):
@@ -42,9 +43,12 @@ class HomePresenceSensor(SensorEntity):
     _attr_should_poll = False
     _attr_native_value = "unknown"
 
-    def __init__(self) -> None:
+    def __init__(self, entry_id: str) -> None:
         """Initialize with a predictable preferred entity ID."""
         self.entity_id = "sensor.home_presence"
+        self._entry_id = entry_id
+        self._history = None
+        self._initialised = False
         self._attr_extra_state_attributes: dict[str, Any] = {
             "tracked_people": [],
             "active_home_evidence": [],
@@ -103,23 +107,76 @@ class HomePresenceSensor(SensorEntity):
             "active_home_evidence": positive,
             "absence_confirmation_minutes": 20,
         }
+        previous = self._attr_native_value
         if (
-            outcome != self._attr_native_value
+            outcome != previous
             or attributes != self._attr_extra_state_attributes
         ):
             self._attr_native_value = outcome
             self._attr_extra_state_attributes = attributes
             self.async_write_ha_state()
 
+        # Log transitions and initial startup observations, not every poll.
+        # The diagnostic log stores entity IDs and zone states but never GPS
+        # latitude/longitude from mobile trackers.
+        if self._history and (not self._initialised or outcome != previous):
+            if any(p.state == "home" for p in people):
+                reason = "Person location confirms Home"
+            elif positive:
+                reason = "Trusted labeled source confirms Home"
+            elif outcome == "away":
+                reason = "All Person locations confirmed outside Home for 20 minutes"
+            else:
+                reason = "Insufficient or recently changed location evidence"
+            self.hass.async_create_task(self._history.record(
+                "presence_state",
+                previous=previous if self._initialised else None,
+                state=outcome,
+                reason=reason,
+                people=[{"entity_id": p.entity_id, "state": p.state,
+                         "source": p.attributes.get("source")}
+                        for p in people],
+                evidence=positive,
+            ))
+        self._initialised = True
+
     async def async_added_to_hass(self) -> None:
         """Subscribe to people, labeled source changes and periodic aging."""
         await super().async_added_to_hass()
+        monitor = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        self._history = getattr(monitor, "history", None)
 
         @callback
         def on_state(event: Event) -> None:
             eid = event.data.get("entity_id", "")
-            if eid.startswith("person.") or eid in self._labeled_entities():
-                self._refresh()
+            if not (eid.startswith("person.") or eid in self._labeled_entities()):
+                return
+            old = event.data.get("old_state")
+            new = event.data.get("new_state")
+            before = old.state if old else None
+            after = new.state if new else None
+            # Include network changes even if the Home/not_home state stays.
+            old_attrs = dict(old.attributes) if old else {}
+            attrs = dict(new.attributes) if new else {}
+            keys = ("mac", "ip", "essid", "ssid", "source")
+            changed_network = any(old_attrs.get(k) != attrs.get(k) for k in keys)
+            if self._history and (before != after or changed_network):
+                source_eid = str(attrs.get("source") or "") if eid.startswith("person.") else eid
+                source = self.hass.states.get(source_eid)
+                source_attrs = dict(source.attributes) if source else {}
+                self.hass.async_create_task(self._history.record(
+                    "presence_source",
+                    entity_id=eid,
+                    source_entity_id=source_eid or None,
+                    previous=before,
+                    state=after,
+                    name=str(attrs.get("friendly_name") or eid),
+                    mac=attrs.get("mac") or source_attrs.get("mac"),
+                    ip=attrs.get("ip") or source_attrs.get("ip"),
+                    ssid=attrs.get("essid") or attrs.get("ssid")
+                         or source_attrs.get("essid") or source_attrs.get("ssid"),
+                ))
+            self._refresh()
 
         @callback
         def on_registry(_: Event) -> None:
