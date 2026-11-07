@@ -334,8 +334,30 @@ class AvailabilityDigest:
             if tracked:
                 info["cloud"] = self.state.pending.get(eid, self.state.active.get(eid, info)).get("cloud", info["cloud"])
             previous_count = len(self.state.batch["events"]) if self.state.batch else 0
+            was_pending = self.state.pending.get(eid)
+            was_active = eid in self.state.active
             if self.state.observe(eid, self._health(new.state, info["cloud"]), info, now, self.window):
                 await self.save()
+                # Record even short outages that never generated an email.
+                if self.history and not was_pending and not was_active and eid in self.state.pending:
+                    await self.history.record(
+                        "availability_event", event="PENDING",
+                        entity_id=eid, name=info.get("name", eid),
+                        area=info.get("area"), scope=info.get("scope"),
+                        since=self.state.pending[eid].get("since"),
+                        reason="Awaiting offline confirmation",
+                    )
+                elif self.history and was_pending and eid not in self.state.pending and not was_active:
+                    await self.history.record(
+                        "availability_event", event="SHORT_OUTAGE",
+                        entity_id=eid, name=info.get("name", eid),
+                        area=info.get("area"), scope=info.get("scope"),
+                        since=was_pending.get("since"),
+                        minutes=max(0, round(
+                            (now - parse(was_pending["since"])).total_seconds() / 60, 2
+                        )),
+                        reason="Recovered before confirmation; no email sent",
+                    )
                 await self._record_new_availability_events(previous_count)
             await self._tick_locked(now)
 
@@ -443,6 +465,13 @@ class AvailabilityDigest:
         if await self._send(title, message):
             batch["immediate_sent"] = True
             await self.save()
+            if self.history:
+                await self.history.record(
+                    "availability_digest", event="INITIAL_EMAIL",
+                    title=title, opened=batch["opened"],
+                    deadline=batch["deadline"],
+                    offline_count=len(outages),
+                )
 
     async def _finish(self, now: datetime) -> None:
         batch = self.state.batch
@@ -487,3 +516,13 @@ class AvailabilityDigest:
         if await self._send(title, "\n".join(lines)):
             self.state.batch = None
             await self.save()
+            if self.history:
+                await self.history.record(
+                    "availability_digest", event="SUMMARY_EMAIL",
+                    title=title, opened=batch["opened"],
+                    deadline=batch["deadline"],
+                    offline_count=len(outages),
+                    recovered_count=len(recoveries),
+                    remaining_offline=len(outstanding),
+                    involved_entities=sorted(involved),
+                )
