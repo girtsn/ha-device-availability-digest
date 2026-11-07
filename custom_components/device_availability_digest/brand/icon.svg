@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Device Availability Digest">
+ <defs><linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#218dff"/><stop offset="1" stop-color="#083d92"/></linearGradient></defs>
+ <g fill="none" stroke="#66bfff" stroke-width="13" stroke-linecap="round"><circle cx="127" cy="136" r="96" opacity=".65"/></g>
+ <path d="M128 51v34M51 166l43-26M202 165l-41-24" fill="none" stroke="#66bfff" stroke-width="12" stroke-linecap="round"/>
+ <circle cx="128" cy="38" r="40" fill="url(#b)" stroke="#073c91" stroke-width="3"/>
+ <path d="M103 35q25-26 50 0M113 46q15-15 30 0" fill="none" stroke="#f2fdff" stroke-width="6" stroke-linecap="round"/>
+ <rect x="110" y="55" width="35" height="8" rx="4" fill="#f4ffff"/>
+ <circle cx="52" cy="177" r="42" fill="url(#b)" stroke="#073c91" stroke-width="3"/>
+ <rect x="31" y="162" width="42" height="25" rx="6" fill="white"/>
+ <path d="M38 186l17 13 14-13" fill="white"/>
+ <circle cx="204" cy="177" r="42" fill="url(#b)" stroke="#073c91" stroke-width="3"/>
+ <rect x="185" y="157" width="38" height="36" rx="7" fill="white"/>
+ <path d="M194 168v8m20-8v8" stroke="#0d4b9b" stroke-width="5" stroke-linecap="round"/>
+ <path d="M190 182h26" stroke="#0d4b9b" stroke-width="5" stroke-linecap="round"/>
+ <circle cx="128" cy="133" r="69" fill="url(#b)" stroke="#a9eaff" stroke-width="5"/>
+ <rect x="87" y="101" width="82" height="64" rx="8" fill="#f2fbff"/>
+ <rect x="95" y="110" width="66" height="45" rx="3" fill="#0c539a"/>
+ <path d="M101 133h12l8-13 12 28 9-15h13" fill="none" stroke="white" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+ <path d="M111 172h35" stroke="#ecffff" stroke-width="5" stroke-linecap="round"/>
+ <circle cx="172" cy="169" r="29" fill="#18bb62" stroke="white" stroke-width="5"/>
+ <path d="m159 168 9 10 19-22" fill="none" stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
