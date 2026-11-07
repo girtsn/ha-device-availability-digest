@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "device_availability_digest"))
-from model import AvailabilityState
+from model import AvailabilityState, format_subject
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
 D = timedelta(minutes=5)
@@ -17,6 +17,12 @@ def info(name="device", cloud=False):
 
 
 class DigestTests(unittest.TestCase):
+    def test_configurable_email_subject_prefix(self):
+        self.assertEqual(format_subject("[HASS]", "OFFLINE: Sauna"), "[HASS] OFFLINE: Sauna")
+        self.assertEqual(format_subject("[Home]", "AVAILABILITY SUMMARY: 3"), "[Home] AVAILABILITY SUMMARY: 3")
+        self.assertEqual(format_subject("", "OFFLINE: Sauna"), "OFFLINE: Sauna")
+        self.assertEqual(format_subject(" [House]  ", "OFFLINE: Sauna"), "[House] OFFLINE: Sauna")
+
     def test_transient_outage_never_notified(self):
         s = AvailabilityState()
         self.assertTrue(s.observe("sensor.a", "bad", info(), T0, W))
