@@ -2,7 +2,7 @@
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: early HACS/Marketplace custom-repository release (v0.1.0).** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.2.0 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -17,6 +17,69 @@ Home Assistant integration that detects device disconnections, confirms them aft
 - **Optional private profile import** to prefill your exact site-specific entity IDs without publishing them.
 
 No MQTT broker, external cloud backend, tokens, or GitHub access is required at runtime.
+
+## Generic Home Presence (v0.2.0)
+
+The integration also exposes **`sensor.home_presence`**, a reusable,
+read-only, vendor-neutral household presence state:
+
+| State | Meaning |
+| --- | --- |
+| `home` | A Home Assistant `person.*` is `home`, or a trusted labeled source positively reports a person at home |
+| `away` | **Every** HA Person has been outside Home continuously for at least **20 minutes**, and no labeled source reports Home |
+| `unknown` | No confirmed Home, but missing/unknown/recently changed location prevents confirming Away |
+
+Presence detection is **independent of the availability digest notification logic**.
+It does not send messages, switch Tado, or control any other devices.
+Use `sensor.home_presence` in your own automations.
+
+### Configure the sources
+
+1. In **Settings → People**, associate each household member with their
+   Home Assistant Companion App **GPS** tracker. Enable background location
+   reporting and reliable connectivity away from the home Wi-Fi. The custom
+   integration reads the resulting `person.*` states; it does *not* perform
+   smartphone GPS tracking itself.
+2. In **Settings → Areas, labels & zones → Labels**, create **Home Presence**.
+   Add that label to trusted **entity-level** positive presence sources, e.g.:
+   - `device_tracker` -> state `home` (UniFi Wi-Fi client, Bluetooth tracker)
+   - `binary_sensor` -> state `on` (reliable human occupancy)
+   - `input_boolean` -> state `on` (intentional manual guest override)
+   - `sensor` -> state `home` (another occupancy source)
+3. Add labels only to reliable signals of **human** presence. Do not label
+   generic online devices, Wi-Fi access points, motion sensors not reliable
+   for whole-house occupancy, UniFi Blocked switches, or orphaned MAC clients.
+4. Verify `sensor.home_presence` in **Developer Tools → States**. Its
+   attributes list `tracked_people` and `active_home_evidence`.
+   Existing installations may have chosen another entity ID if
+   `sensor.home_presence` already exists; inspect the integration's entities.
+
+**Important asymmetry:** Disconnecting from Wi-Fi or losing a labeled signal
+**never establishes Away on its own**. Only valid HA Person GPS-derived
+location states can do that. An unconfigured or unavailable Person blocks
+Away. All `person.*` entities participate; remove out-of-scope Persons or
+scope the configuration if they are not household members.
+
+The sensor refreshes when relevant states/labels change and every 30 seconds
+to complete the 20-minute absence qualification, with conservative behavior
+across Home Assistant restarts. A phone with stale-but-valid `not_home`
+may still be mistaken for recently confirmed Away, so test background
+tracking before using it for safety-critical automations.
+
+### Example consumer automation
+
+```yaml
+alias: Example - react to confirmed Home Presence
+triggers:
+  - trigger: state
+    entity_id: sensor.home_presence
+    to: home
+actions:
+  - action: logbook.log
+    data:
+      name: Home Presence
+      message: Somebody arrived home
+```
 
 ## Installation (custom repository)
 
