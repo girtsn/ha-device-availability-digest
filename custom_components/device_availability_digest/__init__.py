@@ -7,8 +7,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
+import json
 import logging
+from pathlib import Path
 
+from homeassistant.components import frontend, panel_custom, websocket_api
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_STATE_CHANGED
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
@@ -26,20 +30,67 @@ from .const import (
     CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX,
 )
 from .model import AvailabilityState, format_subject, parse, utcnow
+from .history import DiagnosticHistory
+from .diagnostics_api import ws_get_history
 
 _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+PANEL_PATH = "device-availability"
+ASSET_PATH = "/device_availability_digest"
+PANEL_VERSION = json.loads(
+    (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
+)["version"]
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Enable UI config entry loading."""
+    """Register read-only diagnostics and integration-managed panel assets."""
+    root = Path(__file__).parent
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(
+            f"{ASSET_PATH}/manifest.json",
+            str(root / "manifest.json"),
+            cache_headers=False,
+        ),
+        StaticPathConfig(
+            f"{ASSET_PATH}/panel-loader.js",
+            str(root / "www" / "panel-loader.js"),
+            cache_headers=False,
+        ),
+        StaticPathConfig(
+            f"{ASSET_PATH}/assets/{PANEL_VERSION}/managed-panel.js",
+            str(root / "www" / "managed-panel.js"),
+            cache_headers=False,
+        ),
+    ])
+    websocket_api.async_register_command(hass, ws_get_history)
     return True
+
+
+async def _async_register_diagnostics_panel(hass: HomeAssistant) -> None:
+    """Create a one-click dashboard matching other managed integration panels."""
+    if frontend.async_panel_exists(hass, PANEL_PATH):
+        return
+    try:
+        await panel_custom.async_register_panel(
+            hass,
+            frontend_url_path=PANEL_PATH,
+            webcomponent_name="availability-diagnostics-loader-panel",
+            sidebar_title="Availability",
+            sidebar_icon="mdi:lan-check",
+            module_url=f"{ASSET_PATH}/panel-loader.js",
+            config={"integration_version": PANEL_VERSION},
+            require_admin=True,
+        )
+    except (ValueError, RuntimeError):
+        _LOGGER.warning("Could not register Availability diagnostics panel", exc_info=True)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Start the persistent monitor for the single configured instance."""
     options = {**entry.data, **entry.options}
     monitor = AvailabilityDigest(hass, options)
+    monitor.history = DiagnosticHistory(hass)
+    await monitor.history.load()
     await monitor.load()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = monitor
 
@@ -64,6 +115,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Reusable read-only household presence sensor. Separate from the
     # notification monitor; it must not issue actions on consumer devices.
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await _async_register_diagnostics_panel(hass)
 
     if hass.state == CoreState.running:
         hass.async_create_task(monitor.reconcile())
@@ -89,6 +141,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if monitor:
         monitor.started = False
     entry.async_unload_callbacks()
+    if not hass.data.get(DOMAIN):
+        frontend.async_remove_panel(hass, PANEL_PATH, warn_if_unknown=False)
     return True
 
 
@@ -106,6 +160,7 @@ class AvailabilityDigest:
         self._representatives: dict[str, str] = {}
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
         self.state = AvailabilityState()
+        self.history: DiagnosticHistory | None = None
         self.lock = asyncio.Lock()
         self.started = False
 
@@ -114,6 +169,26 @@ class AvailabilityDigest:
 
     async def save(self) -> None:
         await self.store.async_save(self.state.snapshot())
+
+    async def _record_new_availability_events(self, previous_count: int) -> None:
+        """Copy only confirmed OFFLINE/RECOVERED events to diagnostic history."""
+        if self.history is None or self.state.batch is None:
+            return
+        events = self.state.batch.get("events", [])[previous_count:]
+        for evt in events:
+            await self.history.record(
+                "availability_event",
+                event=evt.get("kind"),
+                entity_id=evt.get("entity_id"),
+                name=evt.get("name"),
+                area=evt.get("area"),
+                scope=evt.get("scope"),
+                occurred_at=evt.get("at"),
+                since=evt.get("since"),
+                minutes=evt.get("minutes"),
+                failure_reason=evt.get("failure_reason"),
+                last_successful_update=evt.get("last_successful_update"),
+            )
 
     def _device_id(self, eid: str) -> str | None:
         entry = entity_registry.async_get(self.hass).async_get(eid)
@@ -258,8 +333,10 @@ class AvailabilityDigest:
             info = self._info(eid, attrs)
             if tracked:
                 info["cloud"] = self.state.pending.get(eid, self.state.active.get(eid, info)).get("cloud", info["cloud"])
+            previous_count = len(self.state.batch["events"]) if self.state.batch else 0
             if self.state.observe(eid, self._health(new.state, info["cloud"]), info, now, self.window):
                 await self.save()
+                await self._record_new_availability_events(previous_count)
             await self._tick_locked(now)
 
     def _current_health(self, eid: str, stored: dict) -> str:
@@ -281,6 +358,7 @@ class AvailabilityDigest:
                 state = self.hass.states.get(eid)
                 if state and self._monitored(eid, dict(state.attributes)):
                     candidates.add(eid)
+            previous_count = len(self.state.batch["events"]) if self.state.batch else 0
             for eid in candidates:
                 current = self.hass.states.get(eid)
                 if not current:
@@ -293,6 +371,7 @@ class AvailabilityDigest:
                 touched |= self.state.observe(eid, self._health(current.state, info["cloud"]), info, when, self.window)
             if touched:
                 await self.save()
+                await self._record_new_availability_events(previous_count)
             await self._tick_locked(when)
 
     async def on_timer(self, _: datetime) -> None:
@@ -315,7 +394,11 @@ class AvailabilityDigest:
                 self.state.pending.pop(eid, None)
                 changed = True
             elif health == "bad":
-                changed |= self.state.confirm(eid, now, self.window)
+                previous_count = len(self.state.batch["events"]) if self.state.batch else 0
+                confirmed = self.state.confirm(eid, now, self.window)
+                changed |= confirmed
+                if confirmed:
+                    await self._record_new_availability_events(previous_count)
         if changed:
             await self.save()
         if self.state.initial_needed() and not self.state.due(now):
