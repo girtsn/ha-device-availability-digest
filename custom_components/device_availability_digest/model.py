@@ -17,6 +17,11 @@ def parse(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def format_subject(prefix: str, detail: str) -> str:
+    """Format alert subjects using a per-instance prefix from configuration."""
+    return f"{prefix.strip()} {detail}".strip()
+
+
 class AvailabilityState:
     """Pending, active and digest-window state, suitable for JSON storage."""
 
