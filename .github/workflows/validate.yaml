@@ -1,0 +1,42 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compile sources
+        run: python -m compileall -q custom_components tests
+      - name: Run state-machine unit tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Validate JSON
+        run: |
+          python -m json.tool hacs.json > /dev/null
+          python -m json.tool custom_components/device_availability_digest/manifest.json > /dev/null
+          python -m json.tool custom_components/device_availability_digest/strings.json > /dev/null
+          python -m json.tool custom_components/device_availability_digest/translations/en.json > /dev/null
+
+  validate-hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hassfest
+        uses: home-assistant/actions/hassfest@master
