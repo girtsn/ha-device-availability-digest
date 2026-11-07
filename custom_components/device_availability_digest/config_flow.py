@@ -79,7 +79,8 @@ def discover_defaults(hass: HomeAssistant) -> dict[str, Any]:
         CONF_OFFLINE_MINUTES: DEFAULT_OFFLINE_MINUTES,
         CONF_WINDOW_MINUTES: DEFAULT_WINDOW_MINUTES,
         CONF_EXCLUDED_ENTITIES: excluded,
-        CONF_EXCLUDED_DEVICE_ANCHORS: [],
+        # Resolve any detected proxy switch to its entire registered device.
+        CONF_EXCLUDED_DEVICE_ANCHORS: excluded[:],
         CONF_CONNECTIVITY_ENTITIES: [],
         CONF_AUTO_EXCLUDE_TVS: True,
     }
