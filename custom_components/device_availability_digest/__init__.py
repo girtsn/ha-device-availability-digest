@@ -25,7 +25,7 @@ from .const import (
     CONF_CONNECTIVITY_ENTITIES, CONF_AUTO_EXCLUDE_TVS,
     CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX,
 )
-from .model import AvailabilityState, parse, utcnow
+from .model import AvailabilityState, format_subject, parse, utcnow
 
 _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -330,7 +330,7 @@ class AvailabilityDigest:
 
     def _subject(self, detail: str) -> str:
         """Prepend the UI-configured subject label without double spaces."""
-        return f"{self.subject_prefix} {detail}".strip()
+        return format_subject(self.subject_prefix, detail)
 
     def _when(self, ts: str) -> str:
         return dt_util.as_local(parse(ts)).strftime("%Y-%m-%d %H:%M:%S %Z")
