@@ -30,7 +30,7 @@ def _read_private_profile(filepath: str) -> dict[str, Any]:
         if not isinstance(data, dict):
             raise ValueError("Profile must contain a JSON object")
         keys = {
-            "notify_entity", "offline_minutes", "window_minutes",
+            "notify_entity", "email_subject_prefix", "offline_minutes", "window_minutes",
             "excluded_entities", "excluded_device_entities",
             "connectivity_entities", "auto_exclude_tvs",
         }
@@ -50,6 +50,8 @@ from .const import (
     CONF_EXCLUDED_DEVICE_ANCHORS,
     CONF_EXCLUDED_ENTITIES,
     CONF_NOTIFY,
+    CONF_EMAIL_SUBJECT_PREFIX,
+    DEFAULT_EMAIL_SUBJECT_PREFIX,
     CONF_OFFLINE_MINUTES,
     CONF_WINDOW_MINUTES,
     DEFAULT_OFFLINE_MINUTES,
@@ -76,6 +78,7 @@ def discover_defaults(hass: HomeAssistant) -> dict[str, Any]:
     # A typical HA site will have one email notifier. User can change it in UI.
     return {
         CONF_NOTIFY: email or (available[0] if available else ""),
+        CONF_EMAIL_SUBJECT_PREFIX: DEFAULT_EMAIL_SUBJECT_PREFIX,
         CONF_OFFLINE_MINUTES: DEFAULT_OFFLINE_MINUTES,
         CONF_WINDOW_MINUTES: DEFAULT_WINDOW_MINUTES,
         CONF_EXCLUDED_ENTITIES: excluded,
@@ -90,6 +93,8 @@ def _form(values: dict[str, Any], advanced: bool) -> vol.Schema:
     """Create a schema with already populated values."""
     schema: dict = {
         vol.Required(CONF_NOTIFY, default=values.get(CONF_NOTIFY, "")): str,
+        vol.Required(CONF_EMAIL_SUBJECT_PREFIX, default=values.get(CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX)):
+            vol.All(str, vol.Length(max=80)),
         vol.Required(CONF_OFFLINE_MINUTES, default=values.get(CONF_OFFLINE_MINUTES, DEFAULT_OFFLINE_MINUTES)):
             vol.All(vol.Coerce(int), vol.Range(min=1, max=1440)),
         vol.Required(CONF_WINDOW_MINUTES, default=values.get(CONF_WINDOW_MINUTES, DEFAULT_WINDOW_MINUTES)):
@@ -110,6 +115,7 @@ def _form(values: dict[str, Any], advanced: bool) -> vol.Schema:
 
 def _normalize(values: dict[str, Any]) -> dict[str, Any]:
     result = dict(values)
+    result[CONF_EMAIL_SUBJECT_PREFIX] = result.get(CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX).strip()
     for key in (CONF_EXCLUDED_ENTITIES, CONF_EXCLUDED_DEVICE_ANCHORS, CONF_CONNECTIVITY_ENTITIES):
         result[key] = _split(result.get(key))
     return result
