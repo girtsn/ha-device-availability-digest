@@ -61,6 +61,7 @@ const statusClass=(s)=>String(s||"").toLowerCase();
 const eventTitle=(e)=>{
   if(e.kind==="presence_state")return "Household: "+(e.previous??"initial")+" → "+(e.state??"unknown");
   if(e.kind==="presence_source")return (e.name||e.entity_id||"Source")+": "+(e.previous??"unknown")+" → "+(e.state??"unknown");
+  if(e.kind==="availability_digest")return "Email sent: "+(e.title||e.event||"Availability summary");
   return (e.event||"AVAILABILITY")+": "+(e.name||e.entity_id||"device");
 };
 class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
@@ -170,7 +171,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       const details=E("details",null,"event");
       const summary=E("summary");
       const left=E("span",null,"eventtitle");
-      const badge=event.kind==="availability_event"?event.event:
+      const badge=event.kind==="availability_event"||event.kind==="availability_digest"?event.event:
         event.kind==="presence_state"?"STATE":"SOURCE";
       left.append(this._badge(badge));
       left.append(E("span",eventTitle(event),"eventname"));
@@ -222,7 +223,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   }
   _devices(grid,data){
     const active=data.active||[],pending=data.pending||[];
-    const records=(data.events||[]).filter(x=>x.kind==="availability_event");
+    const records=(data.events||[]).filter(x=>x.kind?.startsWith("availability_"));
     const offline=records.filter(x=>x.event==="OFFLINE").length;
     grid.append(this._stat("Currently offline",active.length,"Confirmed outages"));
     grid.append(this._stat("Pending confirmation",pending.length,"Within the offline grace period"));
