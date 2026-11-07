@@ -7,7 +7,7 @@ command; the dashboard never modifies monitoring or email delivery.
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.helpers.storage import Store
@@ -57,3 +57,16 @@ class DiagnosticHistory:
         cutoff = (utcnow() - timedelta(days=days)).isoformat()
         return [dict(e) for e in self.events
                 if e["at"] >= cutoff][-limit:]
+
+    def between(self, start: datetime, end: datetime, limit: int = 5000) -> list[dict]:
+        """Return events inside an end-exclusive selected calendar range.
+
+        All events are written in UTC. Accept timezone-aware boundaries from
+        the frontend's calendar (which respects local midnight and DST).
+        """
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            return []
+        start_iso = start.astimezone(timezone.utc).isoformat()
+        end_iso = end.astimezone(timezone.utc).isoformat()
+        return [dict(e) for e in self.events
+                if start_iso <= e.get("at", "") < end_iso][-limit:]
