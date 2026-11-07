@@ -2,7 +2,7 @@
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.0 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.1 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -18,7 +18,7 @@ Home Assistant integration that detects device disconnections, confirms them aft
 
 No MQTT broker, external cloud backend, tokens, or GitHub access is required at runtime.
 
-## Integration-managed diagnostic dashboard (v0.3.0)
+## Integration-managed diagnostic dashboard (v0.3.1)
 
 **Availability** appears in the Home Assistant sidebar automatically after
 updating/restarting this integration, using the same integration-managed,
@@ -41,8 +41,20 @@ The dashboard has two tabs:
   and digest-summary notifications. Cloud/API scopes and failure reasons
   remain visible in each relevant incident.
 
-Both views offer **24 hours / 7 / 30 / 90 days**, daily activity charts,
-search by entity ID, device name, MAC/IP/SSID, and click-to-expand records.
+Both views share **the same Tado X / Tylö date-range calendar**, including
+Today, Yesterday, This Week/Month/Quarter/Year, Last 7/30/365 days,
+Last 12 months / 3 years, custom calendar ranges and previous/next arrows.
+The history still retains only the last **90 days**, so longer or older
+selections do not invent historical records. Charts switch between hourly,
+daily, weekly and monthly summaries as appropriate.
+
+A **mobile hamburger button** opens Home Assistant's navigation drawer, as
+on the Tado X / Tylö managed panels. Search supports entity ID, device
+name, MAC/IP/SSID, with click-to-expand diagnostics. **Actual state
+transitions** are distinguished from **source metadata updates** such as
+an IP/MAC/source change while the reported presence state remains home;
+legacy same-state entries also display as details, not transitions.
+
 They use Home Assistant colors/theme, responsive cards and a versioned
 sidebar loader. Dashboard data is **read-only**: opening it does not change
 notification settings, geofencing, heating or device network access.
