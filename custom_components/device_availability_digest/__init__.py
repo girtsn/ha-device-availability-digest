@@ -61,6 +61,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             str(root / "www" / "managed-panel.js"),
             cache_headers=False,
         ),
+        StaticPathConfig(
+            f"{ASSET_PATH}/assets/{PANEL_VERSION}/availability-date-range-picker.js",
+            str(root / "www" / "availability-date-range-picker.js"),
+            cache_headers=False,
+        ),
     ])
     websocket_api.async_register_command(hass, ws_get_history)
     return True
