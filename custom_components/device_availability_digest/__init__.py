@@ -29,7 +29,7 @@ from .const import (
     CONF_CONNECTIVITY_ENTITIES, CONF_AUTO_EXCLUDE_TVS,
     CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX,
 )
-from .model import AvailabilityState, format_subject, parse, utcnow
+from .model import AvailabilityState, format_subject, is_service_device, parse, utcnow
 from .history import DiagnosticHistory
 from .diagnostics_api import ws_get_history
 
@@ -199,15 +199,34 @@ class AvailabilityDigest:
         entry = entity_registry.async_get(self.hass).async_get(eid)
         return entry.device_id if entry else None
 
+    def _virtual_service(self, eid: str) -> bool:
+        """Identify registry devices representing rooms, zones or services."""
+        did = self._device_id(eid)
+        device = device_registry.async_get(self.hass).async_get(did) if did else None
+        return bool(device and is_service_device(device.entry_type))
+
+    def _prune_virtual_incidents(self) -> bool:
+        """Remove previously persisted virtual-room incidents without recovery emails."""
+        ids = set(self.state.pending) | set(self.state.active)
+        if self.state.batch:
+            ids.update(item["entity_id"] for item in self.state.batch["events"])
+        return self.state.discard_entities({eid for eid in ids if self._virtual_service(eid)})
+
+    def _source_integration(self, eid: str) -> str:
+        entry = entity_registry.async_get(self.hass).async_get(eid)
+        return entry.platform if entry else "unknown"
+
     def _ignored(self, eid: str, did: str | None) -> bool:
         if not did or eid in self.excluded_entities:
             return True
         if did in {self._device_id(anchor) for anchor in self.excluded_device_anchors}:
             return True
-        if not self.auto_exclude_tvs:
-            return False
         device = device_registry.async_get(self.hass).async_get(did)
         if not device:
+            return False
+        if is_service_device(device.entry_type):
+            return True
+        if not self.auto_exclude_tvs:
             return False
         description = " ".join(str(x or "") for x in (
             device.name_by_user, device.name, device.manufacturer, device.model
@@ -300,6 +319,7 @@ class AvailabilityDigest:
             "name": name,
             "area": area.name if area else "Unassigned",
             "scope": attrs.get("connectivity_scope", "device"),
+            "integration": self._source_integration(eid),
             "cloud": self._is_cloud(eid, attrs),
             "failure_reason": str(attrs.get("failure_reason") or "Not provided"),
             "last_successful_update": str(attrs.get("last_successful_update") or "Not provided"),
@@ -327,6 +347,12 @@ class AvailabilityDigest:
         if old:
             attrs = {**old.attributes, **attrs}
         async with self.lock:
+            if self._virtual_service(eid):
+                # A previously persisted service incident must never be
+                # revived merely because its entity changed state.
+                if self._prune_virtual_incidents():
+                    await self.save()
+                return
             now = utcnow()
             # Close an expired window before recording the new transition.
             # Otherwise a late recovery would be added to the old summary.
@@ -374,6 +400,10 @@ class AvailabilityDigest:
         """Re-evaluate confirmed/pending outages after a restart; seed new ones."""
         async with self.lock:
             self.started = True
+            # Reclassify persisted incidents before sending overdue digests:
+            # virtual rooms/zones are not physical connectivity endpoints.
+            if self._prune_virtual_incidents():
+                await self.save()
             when = utcnow()
             if self.state.due(when):
                 await self._finish(when)
