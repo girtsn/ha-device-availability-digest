@@ -101,6 +101,7 @@ class AvailabilityState:
             "at": when.isoformat(),
             "since": info.get("since"),
             "name": info.get("name", eid),
+            "integration": info.get("integration", "unknown"),
             "area": info.get("area", "Unassigned"),
             "scope": info.get("scope", "device"),
             "failure_reason": info.get("failure_reason"),
