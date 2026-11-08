@@ -188,6 +188,7 @@ class AvailabilityDigest:
                 name=evt.get("name"),
                 area=evt.get("area"),
                 scope=evt.get("scope"),
+                integration=evt.get("integration"),
                 occurred_at=evt.get("at"),
                 since=evt.get("since"),
                 minutes=evt.get("minutes"),
