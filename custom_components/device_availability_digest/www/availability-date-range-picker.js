@@ -11,13 +11,21 @@ const avDaySpan=(a,b)=>Math.round(
    Date.UTC(a.getFullYear(),a.getMonth(),a.getDate()))/86400000
 );
 const avDateText=date=>date.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
-const avFirstWeekday=()=>{
-  try{return new Intl.Locale(navigator.language).weekInfo.firstDay%7;}
-  catch(_){return 0;}
+// The HA profile setting takes precedence over the browser/device locale.
+const avFirstWeekday=hass=>{
+  const explicit=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"]
+    .indexOf(hass?.locale?.first_weekday);
+  if(explicit>=0)return explicit;
+  const language=hass?.locale?.language||hass?.language||
+    (typeof navigator!=="undefined"?navigator.language:"en-GB");
+  try{
+    const locale=new Intl.Locale(language);
+    return (locale.weekInfo?.firstDay??locale.getWeekInfo?.().firstDay??1)%7;
+  }catch(_){return 1;}
 };
-const avPresetRange=(preset,base=new Date())=>{
+const avPresetRange=(preset,base=new Date(),hass=null)=>{
   const now=avMidnight(base),tomorrow=avAddDays(now,1);
-  const weekOffset=(now.getDay()-avFirstWeekday()+7)%7;
+  const weekOffset=(now.getDay()-avFirstWeekday(hass)+7)%7;
   let start,end=tomorrow;
   switch(preset){
     case "today":start=now;break;
@@ -42,9 +50,18 @@ const avPresetRange=(preset,base=new Date())=>{
 class AvailabilityDateRangePicker extends HTMLElement {
   constructor(){
     super();this.attachShadow({mode:"open"});
-    this._range=avPresetRange("week");this._open=false;
+    this._hass=null;this._range=avPresetRange("week");this._open=false;
     this._month=avMidnight(new Date());
     this._draftStart=null;this._draftEnd=null;
+  }
+  set hass(value){
+    const previous=this._hass;
+    this._hass=value;
+    if(previous && this._range?.preset==="week" &&
+       avFirstWeekday(previous)!==avFirstWeekday(value)){
+      const r=avPresetRange("week",new Date(),value);
+      this._apply(new Date(r.start),new Date(r.end),"week");
+    }else this._render();
   }
   set range(value){if(value){this._range=value;this._render();}}
   get range(){return this._range;}
@@ -139,7 +156,7 @@ class AvailabilityDateRangePicker extends HTMLElement {
     const bar=this._el("div",null,"toolbar");
     const label=avDateText(start)+" – "+avDateText(avAddDays(end,-1));
     bar.append(this._btn("▣  "+label,()=>{this._open=!this._open;this._render();},"label"));
-    bar.append(this._btn("Now",()=>{const r=avPresetRange(this._range.preset==="custom"?"week":this._range.preset);this._apply(avMidnight(new Date(r.start)),avMidnight(new Date(r.end)),r.preset);},"now"));
+    bar.append(this._btn("Now",()=>{const r=avPresetRange(this._range.preset==="custom"?"week":this._range.preset,new Date(),this._hass);this._apply(avMidnight(new Date(r.start)),avMidnight(new Date(r.end)),r.preset);},"now"));
     bar.append(this._btn("‹",()=>this._shift(-1),"chevron"));
     bar.append(this._btn("›",()=>this._shift(1),"chevron",end>=avAddDays(avMidnight(new Date()),1)));
     root.append(bar);
@@ -154,7 +171,7 @@ class AvailabilityDateRangePicker extends HTMLElement {
       ["last3years","Last 3 years"]
     ]){
       presets.append(this._btn(title,()=>{
-        const r=avPresetRange(key);this._apply(avMidnight(new Date(r.start)),avMidnight(new Date(r.end)),key);
+        const r=avPresetRange(key,new Date(),this._hass);this._apply(avMidnight(new Date(r.start)),avMidnight(new Date(r.end)),key);
       },"preset"+(this._range.preset===key?" selected":"")));
     }
     popup.append(presets);
@@ -165,7 +182,7 @@ class AvailabilityDateRangePicker extends HTMLElement {
     head.append(this._btn("›",()=>{this._month=new Date(this._month.getFullYear(),this._month.getMonth()+1,1);this._render();},"chevron"));
     right.append(head);
     const cal=this._el("div",null,"calendar");
-    const first=avFirstWeekday();
+    const first=avFirstWeekday(this._hass);
     for(let i=0;i<7;i++){
       const d=new Date(2026,10,1+((first+i)%7));
       cal.append(this._el("span",d.toLocaleDateString(undefined,{weekday:"narrow"}),"weekday"));
