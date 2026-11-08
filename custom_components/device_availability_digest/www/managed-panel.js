@@ -302,6 +302,9 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       for(const item of items){
         const d=E("details",null,"event"),s=E("summary"),left=E("span",null,"eventtitle");
         left.append(this._badge(status),E("span",item.name||item.entity_id,"eventname"));
+        if(item.integration&&item.integration!=="unknown"){
+          left.append(E("span","via "+item.integration,"muted small"));
+        }
         s.append(left,E("span","Since "+fmt(item.since),"time"));
         d.append(s,E("pre",JSON.stringify(item,null,2)));current.append(d);
       }
