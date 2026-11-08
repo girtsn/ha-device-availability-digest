@@ -45,6 +45,7 @@ def ws_get_history(
         active.append({
             "entity_id": eid,
             "name": data.get("name", eid),
+            "integration": monitor._source_integration(eid),
             "area": data.get("area", "Unassigned"),
             "scope": data.get("scope", "device"),
             "since": data.get("since"),
@@ -53,6 +54,7 @@ def ws_get_history(
         })
     pending = [
         {"entity_id": eid, "name": data.get("name", eid),
+         "integration": monitor._source_integration(eid),
          "since": data.get("since"), "area": data.get("area", "Unassigned")}
         for eid, data in sorted(monitor.state.pending.items())
     ]
