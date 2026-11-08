@@ -64,6 +64,7 @@ class MetadataTests(unittest.TestCase):
             hass=object(),
             _device_id=lambda eid: "test-device-id",
             _is_cloud=lambda eid, attrs: False,
+            _source_integration=lambda eid: "tuya_local",
         )
         result = namespace["_info"](
             monitor, "climate.1fl_towel_dryer_heating_element", {}
@@ -75,6 +76,7 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(info["name"], "1fl towel dryer")
         self.assertEqual(info["area"], "First floor")
         self.assertEqual(info["scope"], "device")
+        self.assertEqual(info["integration"], "tuya_local")
         self.assertFalse(info["cloud"])
         self.assertEqual(lookups, ["first_floor"])
 
