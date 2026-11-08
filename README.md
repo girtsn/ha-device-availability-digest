@@ -2,7 +2,7 @@
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.3 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.4 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -219,3 +219,11 @@ The initial setup and **Configure / Options** UI provide an **Email subject pref
 The repository uses the same GitHub Release model as Renson Sense and Tylö Sauna: bump the `version` in `custom_components/device_availability_digest/manifest.json`, optionally add `RELEASE_NOTES_<version>.md`, and push to `main`. After successful CI validation of **the current main commit**, the workflow publishes the matching `v<version>` tag and GitHub Release for HACS; it skips versions already released and stale workflow runs. No ZIP asset is required.
 
 One-time GitHub metadata: set repository topics such as `home-assistant`, `hacs`, `home-assistant-custom-component`, and `device-monitoring` in the repository's **About** section. The HACS validation workflow temporarily ignores the repository-topic check until topics are added; other checks remain active.
+
+## Logical rooms and service-device monitoring (v0.3.4)
+
+Availability Digest monitors **registered physical devices**, not virtual service-type Home Assistant device-registry entries (for example, Hue Rooms/Zones or other logical groups). These service entries can have misleading `binary_sensor.*_connectivity` states and must not be counted as independent device outages. On startup, v0.3.4 also retires persisted virtual-service incidents without emitting artificial recovery emails; prior historical records are not rewritten.
+
+The expanded details for current/pending items include the **source integration** (entity-registry platform), to help identify whether a sensor comes from Hue, MQTT, Ping, another integration or a custom provider. A value of `scope: device` only indicates a default monitoring scope; it never proves the item is a physical device.
+
+Real physical lights, plugs, sensors, thermostats and local/cloud API status signals remain monitored according to the existing policies. **Important:** not every integration registers synthetic room/group endpoints as service-type devices. If an unwanted room sensor still appears, open its entity details in Home Assistant and inspect its integration and device model before making a targeted exclusion. An `unknown` connectivity state can still cause noise for physical devices; this is a separate signal-quality issue to evaluate after identifying the provider.
