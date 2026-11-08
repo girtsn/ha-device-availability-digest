@@ -22,6 +22,11 @@ def format_subject(prefix: str, detail: str) -> str:
     return f"{prefix.strip()} {detail}".strip()
 
 
+def is_service_device(entry_type: object) -> bool:
+    """True for registry service/virtual devices, not physical devices."""
+    return getattr(entry_type, "value", entry_type) == "service"
+
+
 class AvailabilityState:
     """Pending, active and digest-window state, suitable for JSON storage."""
 
@@ -33,6 +38,29 @@ class AvailabilityState:
 
     def snapshot(self) -> dict:
         return {"pending": self.pending, "active": self.active, "batch": self.batch}
+
+    def discard_entities(self, entity_ids: set[str]) -> bool:
+        """Silently retire entities excluded by current monitoring policy.
+
+        Unlike a recovery, withdrawing a virtual device should not generate
+        another alert. Keep unrelated active incidents and queued events.
+        """
+        changed = False
+        for eid in entity_ids:
+            if self.pending.pop(eid, None) is not None:
+                changed = True
+            if self.active.pop(eid, None) is not None:
+                changed = True
+        if self.batch is not None:
+            existing = self.batch["events"]
+            remaining = [evt for evt in existing if evt["entity_id"] not in entity_ids]
+            if len(remaining) != len(existing):
+                changed = True
+                if remaining:
+                    self.batch["events"] = remaining
+                else:
+                    self.batch = None
+        return changed
 
     def observe(self, entity_id: str, health: str, info: dict, when: datetime, window: timedelta) -> bool:
         """Record a state observation; health is 'bad', 'good' or 'uncertain'."""
