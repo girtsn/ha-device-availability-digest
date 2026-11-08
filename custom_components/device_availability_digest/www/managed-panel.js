@@ -86,6 +86,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   }
   set hass(v){
     this._hass=v;
+    if(this._picker?.isConnected)this._picker.hass=v;
     if(this.isConnected && !this._data && !this._loading)this._load();
   }
   set panel(v){this._panel=v;}
@@ -327,6 +328,8 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     if(this._pickerReady){
       const picker=E(pickerTag);
       picker.range=this._range;
+      picker.hass=this._hass;
+      this._picker=picker;
       picker.addEventListener("date-range-changed",event=>{
         this._range=event.detail;
         this._search="";
