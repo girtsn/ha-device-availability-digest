@@ -294,7 +294,7 @@ class AvailabilityDigest:
     def _info(self, eid: str, attrs: dict) -> dict:
         did = self._device_id(eid)
         device = device_registry.async_get(self.hass).async_get(did) if did else None
-        area = area_registry.async_get(self.hass).async_get(device.area_id) if device and device.area_id else None
+        area = area_registry.async_get(self.hass).async_get_area(device.area_id) if device and device.area_id else None
         name = ((device.name_by_user or device.name) if device else "") or eid
         return {
             "name": name,
