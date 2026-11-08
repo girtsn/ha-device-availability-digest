@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "device_availability_digest"))
-from model import AvailabilityState, format_subject
+from model import AvailabilityState, format_subject, is_service_device
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
 D = timedelta(minutes=5)
@@ -17,6 +17,48 @@ def info(name="device", cloud=False):
 
 
 class DigestTests(unittest.TestCase):
+    def test_service_device_filter(self):
+        from enum import Enum
+
+        class EntryType(Enum):
+            SERVICE = "service"
+            DEVICE = "device"
+
+        self.assertTrue(is_service_device("service"))
+        self.assertTrue(is_service_device(EntryType.SERVICE))
+        self.assertFalse(is_service_device(EntryType.DEVICE))
+        self.assertFalse(is_service_device(None))
+
+    def test_retire_false_room_outage_without_recovery(self):
+        state = AvailabilityState()
+        state.observe("binary_sensor.room_connectivity", "bad", info("Room"), T0, W)
+        state.observe("climate.towel_dryer", "bad", info("Towel dryer"), T0, W)
+        state.confirm("binary_sensor.room_connectivity", T0 + D, W)
+        state.confirm("climate.towel_dryer", T0 + D, W)
+        state.batch["immediate_sent"] = True
+        restored = AvailabilityState(state.snapshot())
+
+        self.assertTrue(restored.discard_entities({"binary_sensor.room_connectivity"}))
+        self.assertNotIn("binary_sensor.room_connectivity", restored.active)
+        self.assertIn("climate.towel_dryer", restored.active)
+        self.assertEqual([e["entity_id"] for e in restored.batch["events"]], ["climate.towel_dryer"])
+        self.assertFalse(restored.initial_needed())
+        self.assertFalse(restored.discard_entities({"binary_sensor.room_connectivity"}))
+
+    def test_retire_only_virtual_events_clears_empty_batch(self):
+        state = AvailabilityState()
+        eid = "binary_sensor.hue_room_connectivity"
+        state.observe(eid, "bad", info("Virtual room"), T0, W)
+        state.confirm(eid, T0 + D, W)
+        self.assertTrue(state.discard_entities({eid}))
+        self.assertEqual(state.active, {})
+        self.assertIsNone(state.batch)
+        # A later physical outage still opens a normal fresh window.
+        state.observe("climate.towel_dryer", "bad", info("Towel dryer"), T0 + D, W)
+        state.confirm("climate.towel_dryer", T0 + timedelta(minutes=10), W)
+        self.assertTrue(state.initial_needed())
+
+
     def test_configurable_email_subject_prefix(self):
         self.assertEqual(format_subject("[HASS]", "OFFLINE: Sauna"), "[HASS] OFFLINE: Sauna")
         self.assertEqual(format_subject("[Home]", "AVAILABILITY SUMMARY: 3"), "[Home] AVAILABILITY SUMMARY: 3")
