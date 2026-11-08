@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "device_availability_digest"))
-from model import AvailabilityState, format_subject, is_service_device
+from model import AvailabilityState, format_subject, is_nonphysical_device, is_service_device
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
 D = timedelta(minutes=5)
@@ -28,6 +28,32 @@ class DigestTests(unittest.TestCase):
         self.assertTrue(is_service_device(EntryType.SERVICE))
         self.assertFalse(is_service_device(EntryType.DEVICE))
         self.assertFalse(is_service_device(None))
+
+    def test_tado_zone_is_not_a_physical_device(self):
+        # The tado X integration registers heating Zone entries without the
+        # HA service entry type. Physical devices have real hardware models.
+        self.assertTrue(is_nonphysical_device(None, "Tado", "Zone"))
+        self.assertTrue(is_nonphysical_device(None, "tado", " zone "))
+        self.assertTrue(is_nonphysical_device("service", "Philips", "Room"))
+        self.assertFalse(is_nonphysical_device(None, "Tado", "Home"))
+        self.assertFalse(is_nonphysical_device(None, "Tado", "RU02"))
+        self.assertFalse(is_nonphysical_device(None, "Tuya", "Zone"))
+        self.assertFalse(is_nonphysical_device(None, "Hue", "Smart plug"))
+        self.assertFalse(is_nonphysical_device(None, None, None))
+
+    def test_retire_tado_zone_without_retiring_tado_api(self):
+        state = AvailabilityState()
+        zone = "binary_sensor.0fl_hallway_connectivity"
+        api = "binary_sensor.tado_x_api_cloud_connection_state"
+        state.observe(zone, "bad", info("0fl hallway", True), T0, W)
+        state.observe(api, "bad", info("tado API", True), T0, W)
+        state.confirm(zone, T0 + D, W)
+        state.confirm(api, T0 + D, W)
+        self.assertTrue(state.discard_entities({zone}))
+        self.assertNotIn(zone, state.active)
+        self.assertIn(api, state.active)
+        self.assertEqual(len(state.batch["events"]), 1)
+        self.assertEqual(state.batch["events"][0]["entity_id"], api)
 
     def test_retire_false_room_outage_without_recovery(self):
         state = AvailabilityState()

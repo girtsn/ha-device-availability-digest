@@ -27,6 +27,19 @@ def is_service_device(entry_type: object) -> bool:
     return getattr(entry_type, "value", entry_type) == "service"
 
 
+def is_nonphysical_device(entry_type: object, manufacturer: object, model: object) -> bool:
+    """Exclude logical HA services and tado heating zones, never real hardware.
+
+    Tado uses a regular HA device-registry entry for each logical room/Zone,
+    rather than setting entry_type=service. Physical tado thermostats use
+    distinct hardware models, and the API status sensors belong to model Home.
+    """
+    return is_service_device(entry_type) or (
+        str(manufacturer or "").strip().casefold() == "tado"
+        and str(model or "").strip().casefold() == "zone"
+    )
+
+
 class AvailabilityState:
     """Pending, active and digest-window state, suitable for JSON storage."""
 

@@ -29,7 +29,7 @@ from .const import (
     CONF_CONNECTIVITY_ENTITIES, CONF_AUTO_EXCLUDE_TVS,
     CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX,
 )
-from .model import AvailabilityState, format_subject, is_service_device, parse, utcnow
+from .model import AvailabilityState, format_subject, is_nonphysical_device, parse, utcnow
 from .history import DiagnosticHistory
 from .diagnostics_api import ws_get_history
 
@@ -200,18 +200,22 @@ class AvailabilityDigest:
         entry = entity_registry.async_get(self.hass).async_get(eid)
         return entry.device_id if entry else None
 
-    def _virtual_service(self, eid: str) -> bool:
-        """Identify registry devices representing rooms, zones or services."""
+    def _nonphysical_endpoint(self, eid: str) -> bool:
+        """Recognize virtual HA services and tado logical heating zones."""
         did = self._device_id(eid)
         device = device_registry.async_get(self.hass).async_get(did) if did else None
-        return bool(device and is_service_device(device.entry_type))
+        return bool(device and is_nonphysical_device(
+            device.entry_type, device.manufacturer, device.model
+        ))
 
-    def _prune_virtual_incidents(self) -> bool:
-        """Remove previously persisted virtual-room incidents without recovery emails."""
+    def _prune_nonphysical_incidents(self) -> bool:
+        """Retire persisted service/room incidents without recovery messages."""
         ids = set(self.state.pending) | set(self.state.active)
         if self.state.batch:
             ids.update(item["entity_id"] for item in self.state.batch["events"])
-        return self.state.discard_entities({eid for eid in ids if self._virtual_service(eid)})
+        return self.state.discard_entities({
+            eid for eid in ids if self._nonphysical_endpoint(eid)
+        })
 
     def _source_integration(self, eid: str) -> str:
         entry = entity_registry.async_get(self.hass).async_get(eid)
@@ -225,7 +229,7 @@ class AvailabilityDigest:
         device = device_registry.async_get(self.hass).async_get(did)
         if not device:
             return False
-        if is_service_device(device.entry_type):
+        if is_nonphysical_device(device.entry_type, device.manufacturer, device.model):
             return True
         if not self.auto_exclude_tvs:
             return False
@@ -348,10 +352,10 @@ class AvailabilityDigest:
         if old:
             attrs = {**old.attributes, **attrs}
         async with self.lock:
-            if self._virtual_service(eid):
-                # A previously persisted service incident must never be
-                # revived merely because its entity changed state.
-                if self._prune_virtual_incidents():
+            if self._nonphysical_endpoint(eid):
+                # Nonphysical service/zone incidents must never be revived
+                # merely because an unrelated room entity changes state.
+                if self._prune_nonphysical_incidents():
                     await self.save()
                 return
             now = utcnow()
@@ -402,8 +406,8 @@ class AvailabilityDigest:
         async with self.lock:
             self.started = True
             # Reclassify persisted incidents before sending overdue digests:
-            # virtual rooms/zones are not physical connectivity endpoints.
-            if self._prune_virtual_incidents():
+            # HA service objects and tado Zones are not physical endpoints.
+            if self._prune_nonphysical_incidents():
                 await self.save()
             when = utcnow()
             if self.state.due(when):

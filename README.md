@@ -2,7 +2,7 @@
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.4 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.5 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -227,3 +227,11 @@ Availability Digest monitors **registered physical devices**, not virtual servic
 The expanded details for current/pending items include the **source integration** (entity-registry platform), to help identify whether a sensor comes from Hue, MQTT, Ping, another integration or a custom provider. A value of `scope: device` only indicates a default monitoring scope; it never proves the item is a physical device.
 
 Real physical lights, plugs, sensors, thermostats and local/cloud API status signals remain monitored according to the existing policies. **Important:** not every integration registers synthetic room/group endpoints as service-type devices. If an unwanted room sensor still appears, open its entity details in Home Assistant and inspect its integration and device model before making a targeted exclusion. An `unknown` connectivity state can still cause noise for physical devices; this is a separate signal-quality issue to evaluate after identifying the provider.
+
+## tado logical heating-zone exclusion (v0.3.5)
+
+The tado X custom integration registers its **logical room/Zone** entries as normal Home Assistant devices with manufacturer `Tado` and model `Zone`, not `entry_type: service`. They contain room `binary_sensor.*_connectivity` entities that can create misleading bulk OFFLINE incidents. Device Availability Digest now ignores those zone entries regardless of entity name. It also removes previously persisted zone incidents from pending, active and unfinished email batches when the upgraded integration starts; saved diagnostic-history events are retained.
+
+Actual tado thermostat hardware remains eligible for normal monitoring, and the independent tado X `main_api` and `settings_api` connection health sensors remain monitored because they are attached to the Tado `Home` device. The filter uses registry manufacturer/model metadata, not arbitrary room-name patterns.
+
+Update through HACS to v0.3.5 and restart Home Assistant. If a tado room still appears, expand the incident and check the device-registry manufacturer and model; report the entity and metadata so an additional logical variant can be recognized safely.
