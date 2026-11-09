@@ -29,6 +29,8 @@ jobs:
         run: node tests/test_date_range_locale.cjs
       - name: Test Wi-Fi and GPS source evidence timestamps
         run: node tests/test_presence_source_dates.cjs
+      - name: Test stale measurement dashboard integration
+        run: node tests/test_stale_panel.cjs
       - name: Validate JSON
         run: |
           python -m json.tool hacs.json > /dev/null
