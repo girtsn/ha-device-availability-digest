@@ -84,5 +84,11 @@ def ws_get_history(
         # Current last-Home timestamps are independent of the selected
         # 90-day event-history filter and survive normal HA restarts.
         "source_last_home": dict(monitor.history.last_home),
+        "stale": (monitor.stale.snapshot() if monitor.stale is not None
+                  else {"enabled": False, "started": False, "rows": [],
+                        "counts": {"monitored": 0, "stale": 0, "suspect": 0,
+                                   "pending": 0, "healthy": 0},
+                        "queued_events": 0, "last_digest": None,
+                        "checked_at": None}),
         "retention_days": 90,
     })

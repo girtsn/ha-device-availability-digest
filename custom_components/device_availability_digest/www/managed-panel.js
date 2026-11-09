@@ -23,7 +23,7 @@ h3{font-size:15px;font-weight:600;margin:0 0 7px}
 .btn,.tab{font:inherit;border:1px solid var(--divider-color,#d7d7d7);background:var(--card-background-color,#fff);color:var(--primary-text-color);border-radius:10px;padding:9px 15px;cursor:pointer}
 .btn[aria-pressed=true],.tab[aria-selected=true]{color:var(--primary-color,#1769aa);border-color:var(--primary-color,#1769aa);background:var(--secondary-background-color,#f1f6fa);font-weight:600}
 .btn:hover,.tab:hover{border-color:var(--primary-color,#1769aa)}
-.tabs{display:flex;gap:9px;border-bottom:1px solid var(--divider-color,#ddd);padding-bottom:11px}
+.tabs{display:flex;gap:9px;border-bottom:1px solid var(--divider-color,#ddd);padding-bottom:11px;flex-wrap:wrap}
 .tab{border-radius:9px}
 .card{background:var(--card-background-color,#fff);border:1px solid var(--divider-color,#ddd);border-radius:14px;padding:20px;min-width:0}
 .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;margin-top:16px}
@@ -31,7 +31,7 @@ h3{font-size:15px;font-weight:600;margin:0 0 7px}
 .stat{font-size:31px;font-weight:650;margin-top:6px}
 .badge{display:inline-block;padding:4px 10px;border-radius:99px;background:var(--secondary-background-color,#eee);color:var(--primary-text-color);font-size:12px;font-weight:600}
 .badge.home,.badge.recovered{background:#e4f3e9;color:#1a743c}
-.badge.away,.badge.offline{background:#fff0e8;color:#a34315}
+.badge.stale,.badge.suspect,.badge.away,.badge.offline{background:#fff0e8;color:#a34315}
 .badge.unknown{background:#f6f0df;color:#7b6420}
 .pills{display:flex;flex-wrap:wrap;gap:8px}
 .pill{font-size:12px;border-radius:6px;padding:6px 8px;background:var(--secondary-background-color,#efefef);overflow-wrap:anywhere}
@@ -80,13 +80,16 @@ const eventTitle=(e)=>{
   if(isSourceDetails(e))return "Source details updated: "+(e.name||e.entity_id||"Source")+
     " (still "+(e.state??"unknown")+")";
   if(e.kind==="presence_source")return (e.name||e.entity_id||"Source")+": "+(e.previous??"unknown")+" → "+(e.state??"unknown");
-  if(e.kind==="availability_digest")return "Email sent: "+(e.title||e.event||"Availability summary");
+  if(e.kind==="availability_digest"||e.kind==="stale_digest")
+    return "Email sent: "+(e.title||e.event||"Summary");
+  if(e.kind==="stale_measurement")
+    return (e.event||"MEASUREMENT")+": "+(e.name||e.entity_id||"sensor");
   return (e.event||"AVAILABILITY")+": "+(e.name||e.entity_id||"device");
 };
 class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   constructor(){
     super();this.attachShadow({mode:"open"});
-    this._hass=null;this._tab="presence";this._data=null;
+    this._hass=null;this._tab="presence";this._data=null;this._staleShowAll=false;
     const start=new Date();start.setHours(0,0,0,0);start.setDate(start.getDate()-6);
     const end=new Date();end.setHours(0,0,0,0);end.setDate(end.getDate()+1);
     this._range={start:start.toISOString(),end:end.toISOString(),preset:"last7"};
@@ -101,7 +104,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   }
   set panel(v){this._panel=v;}
   set route(v){this._route=v;const p=(v?.path||"").split("/").filter(Boolean)[0];
-    if((p==="devices"||p==="presence")&&p!==this._tab){this._tab=p;this._render();}}
+    if((p==="devices"||p==="presence"||p==="stale")&&p!==this._tab){this._tab=p;this._render();}}
   set narrow(v){this._narrow=!!v;}
   async _ensurePicker(){
     if(this._pickerReady||this._pickerPromise)return this._pickerPromise;
@@ -249,7 +252,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       const details=E("details",null,"event");
       const summary=E("summary");
       const left=E("span",null,"eventtitle");
-      const badge=event.kind==="availability_event"||event.kind==="availability_digest"?event.event:
+      const badge=["availability_event","availability_digest","stale_measurement","stale_digest"].includes(event.kind)?event.event:
         event.kind==="presence_state"?"STATE":isSourceDetails(event)?"DETAILS":"SOURCE";
       left.append(this._badge(badge));
       left.append(E("span",eventTitle(event),"eventname"));
@@ -372,6 +375,79 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     grid.append(this._chart(records,e=>e.kind==="availability_event"));
     grid.append(this._events(records.slice().reverse(),"Device Availability · confirmed offline/recovered history"));
   }
+  _stale(grid,data){
+    const monitor=data.stale||{};
+    const counts=monitor.counts||{};
+    if(!monitor.enabled){
+      grid.append(this._card("Stale sensor monitoring is disabled in integration Options.",12));
+      return;
+    }
+    grid.append(this._stat("Stale reports",counts.stale||0,"No fresh state report, unknown or unavailable beyond threshold"));
+    grid.append(this._stat("Suspected frozen",counts.suspect||0,"Only sensors explicitly labeled stale_monitor_watch_value"));
+    grid.append(this._stat("Sensors monitored",counts.monitored||0,
+      (counts.healthy||0)+" healthy · "+(counts.pending||0)+" pending"));
+    const info=this._card("Monitoring status",12);
+    info.append(E("div",
+      "Last scan: "+fmt(monitor.checked_at)+" · Scan interval: 15 minutes · "+
+      "Next regular digests: 08:00 and 20:00 (Home Assistant local time) · "+
+      "Queued changes: "+(monitor.queued_events||0)+" · Last email: "+fmt(monitor.last_digest),
+      "small"));
+    info.append(E("p",
+      "Missing reports use last_reported (not last_changed). Some integrations publish only "+
+      "when a value changes, so these are missing HA reports, not proof the hardware is faulty. "+
+      "A repeated identical value with a fresh report is healthy unless you explicitly enable "+
+      "frozen-value suspicion on that entity. Unknown/unavailable sensors are flagged after a grace period.",
+      "muted small"));
+    info.append(E("p",
+      "Configure entity-level labels: stale_monitor_include, stale_monitor_ignore, "+
+      "stale_monitor_fast (3h), stale_monitor_slow (168h), "+
+      "stale_monitor_watch_value (heuristic). Defaults: air 12h, ambient 48h, "+
+      "electrical 72h, other 168h. Daily emails contain changes only.",
+      "muted small"));
+    grid.append(info);
+    const card=this._card("Current measurements",12);
+    const controls=E("div",null,"toolbar");
+    controls.append(this._btn("Flagged and pending",!this._staleShowAll,()=>{
+      this._staleShowAll=false;this._render();
+    }));
+    controls.append(this._btn("All monitored",this._staleShowAll,()=>{
+      this._staleShowAll=true;this._render();
+    }));
+    card.append(controls);
+    const input=E("input",null,"search");input.type="search";
+    input.placeholder="Filter by room, entity ID, device, status or integration";
+    input.value=this._search;
+    input.onchange=()=>{this._search=input.value.toLowerCase().trim();this._render();};
+    card.append(input);
+    const rows=(monitor.rows||[]).filter(row=>
+      (this._staleShowAll||row.status!=="healthy") &&
+      (!this._search||JSON.stringify(row).toLowerCase().includes(this._search)));
+    card.append(E("div",rows.length+" measurements displayed", "muted small"));
+    if(!rows.length)card.append(E("div",
+      (counts.monitored||0)===0?"No eligible numeric device-backed measurements found. "+
+      "Use stale_monitor_include on an entity to opt it in.":
+      "No matching flagged or pending measurements. Choose All monitored to audit coverage.",
+      "empty"));
+    for(const row of rows.slice(0,500)){
+      const details=E("details",null,"event");
+      const summary=E("summary");
+      const left=E("span",null,"eventtitle");
+      left.append(this._badge(row.status),E("span",row.name||row.entity_id,"eventname"));
+      left.append(E("span",(row.value||"—")+(row.unit?" "+row.unit:""),"small"));
+      summary.append(left,E("span",
+        row.age_hours+"h / "+row.threshold_hours+"h","time"));
+      details.append(summary,E("div",row.entity_id+" · "+row.reason+
+        " · "+row.area+" · "+row.integration,"muted small"),
+        E("pre",JSON.stringify(row,null,2)));
+      card.append(details);
+    }
+    if(rows.length>500)card.append(E("div",
+      "Showing 500 of "+rows.length+" matching readings. Narrow the search.","muted small"));
+    grid.append(card);
+    const records=(data.events||[]).filter(e=>e.kind==="stale_measurement"||e.kind==="stale_digest");
+    grid.append(this._chart(records,e=>e.kind==="stale_measurement"));
+    grid.append(this._events(records.slice().reverse(),"Stale sensors · transitions and digest delivery"));
+  }
   _render(){
     if(!this.isConnected)return;
     const root=this.shadowRoot;
@@ -380,7 +456,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     const heading=E("div",null,"heading");
     const header=E("div");
     header.append(E("h1","Availability & Home Presence"));
-    header.append(E("p","Device connectivity, household presence and diagnostic history","subtitle"));
+    header.append(E("p","Device connectivity, household presence, stale measurements and diagnostic history","subtitle"));
     const headingGroup=E("div",null,"heading-group");
     headingGroup.append(this._mobileMenuButton(),header);
     heading.append(headingGroup);
@@ -416,12 +492,16 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     tabs.append(this._btn("Device availability",this._tab==="devices",()=>{
       this._tab="devices";this._search="";this._render();
     },"tab"));
+    tabs.append(this._btn("Stale sensors",this._tab==="stale",()=>{
+      this._tab="stale";this._search="";this._render();
+    },"tab"));
     shell.append(tabs);
     if(this._error)shell.append(E("p",this._error,"error"));
     if(!this._data)shell.append(E("div",this._loading?"Loading diagnostic history…":"No diagnostics available yet.","empty"));
     else{
       const grid=E("main",null,"grid");
       if(this._tab==="presence")this._presence(grid,this._data);
+      else if(this._tab==="stale")this._stale(grid,this._data);
       else this._devices(grid,this._data);
       shell.append(grid);
     }
