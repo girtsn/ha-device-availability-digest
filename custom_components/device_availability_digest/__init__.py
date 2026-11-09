@@ -18,7 +18,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_STATE_CHANGED
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import area_registry, device_registry, entity_registry
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval, async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -32,6 +32,7 @@ from .const import (
 from .model import AvailabilityState, format_subject, is_nonphysical_device, parse, utcnow
 from .history import DiagnosticHistory
 from .diagnostics_api import ws_get_history
+from .stale_monitor import StaleSensorMonitor
 
 _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -97,6 +98,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     monitor.history = DiagnosticHistory(hass)
     await monitor.history.load()
     await monitor.load()
+    if options.get("stale_monitor_enabled", True):
+        monitor.stale = StaleSensorMonitor(
+            hass, monitor._send, monitor._subject, monitor.history
+        )
+        await monitor.stale.load()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = monitor
 
     @callback
@@ -110,6 +116,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(hass.bus.async_listen(EVENT_STATE_CHANGED, on_change))
     entry.async_on_unload(async_track_time_interval(hass, on_timer, timedelta(seconds=30)))
     entry.async_on_unload(entry.add_update_listener(async_update_options))
+    if monitor.stale is not None:
+        @callback
+        def on_stale_tick(_: datetime) -> None:
+            hass.async_create_task(monitor.stale.scan())
+
+        @callback
+        def on_stale_digest(_: datetime) -> None:
+            hass.async_create_task(monitor.stale.scan(send_digest=True))
+
+        entry.async_on_unload(async_track_time_interval(
+            hass, on_stale_tick, timedelta(minutes=15)
+        ))
+        for hour in (8, 20):
+            entry.async_on_unload(async_track_time_change(
+                hass, on_stale_digest, hour=hour, minute=0, second=0
+            ))
 
     @callback
     def on_registry_changed(_: Event) -> None:
@@ -122,12 +144,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     await _async_register_diagnostics_panel(hass)
 
+    async def start_monitors() -> None:
+        await monitor.reconcile()
+        if monitor.stale is not None:
+            await monitor.stale.scan()
+
     if hass.state == CoreState.running:
-        hass.async_create_task(monitor.reconcile())
+        hass.async_create_task(start_monitors())
     else:
         @callback
         def on_started(_: Event) -> None:
-            hass.async_create_task(monitor.reconcile())
+            hass.async_create_task(start_monitors())
 
         entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, on_started))
     return True
@@ -145,6 +172,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     monitor = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if monitor:
         monitor.started = False
+        if monitor.stale is not None:
+            monitor.stale.started = False
     entry.async_unload_callbacks()
     if not hass.data.get(DOMAIN):
         frontend.async_remove_panel(hass, PANEL_PATH, warn_if_unknown=False)
@@ -166,6 +195,7 @@ class AvailabilityDigest:
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
         self.state = AvailabilityState()
         self.history: DiagnosticHistory | None = None
+        self.stale: StaleSensorMonitor | None = None
         self.lock = asyncio.Lock()
         self.started = False
 
