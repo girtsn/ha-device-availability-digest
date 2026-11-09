@@ -163,6 +163,12 @@ class AvailabilityDigestOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict | None = None):
         values = {**self.config_entry.data, **self.config_entry.options}
+        if not values.get("stale_notify_entity"):
+            values["stale_notify_entity"] = (
+                "notify.email_girts"
+                if self.hass.states.get("notify.email_girts")
+                else values.get(CONF_NOTIFY, "")
+            )
         if user_input is not None:
             if not user_input.get(CONF_NOTIFY, "").startswith("notify.") or not user_input.get("stale_notify_entity", values.get("stale_notify_entity") or user_input.get(CONF_NOTIFY, "")).startswith("notify."):
                 return self.async_show_form(
