@@ -12,6 +12,7 @@ from typing import Any
 
 from homeassistant.helpers.storage import Store
 from .model import utcnow
+from .home_timestamps import latest_timestamps
 
 HISTORY_KEY = "device_availability_digest_history"
 MAX_EVENTS = 5000
@@ -24,12 +25,17 @@ class DiagnosticHistory:
     def __init__(self, hass) -> None:
         self.store = Store(hass, 1, HISTORY_KEY, private=True, atomic_writes=True)
         self.events: list[dict[str, Any]] = []
+        # Persists last positive Home observation across HA restarts, even
+        # after the ordinary 90-day diagnostic event window has expired.
+        self.last_home: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._counter = 0
 
     async def load(self) -> None:
         data = await self.store.async_load() or {}
         self.events = list(data.get("events", []))[-MAX_EVENTS:]
+        original = data.get("last_home", {})
+        self.last_home = latest_timestamps({}, original if isinstance(original, dict) else {})
         self._counter = int(data.get("counter", 0))
         self._prune()
 
@@ -51,6 +57,30 @@ class DiagnosticHistory:
             await self.store.async_save({
                 "counter": self._counter,
                 "events": self.events,
+                "last_home": self.last_home,
+            })
+
+    async def record_last_home(self, observations: dict[str, str]) -> None:
+        """Persist newest Home reports without turning each poll into an event.
+
+        GPS and Wi-Fi entities are included only when their HA states actually
+        assert Home. No coordinates, MAC or IP values are written here.
+        """
+        if not observations:
+            return
+        async with self._lock:
+            merged = latest_timestamps(self.last_home, observations)
+            if merged == self.last_home:
+                return
+            # Limit obsolete entity accumulation without affecting active
+            # tracked devices. Oldest historical observations are discarded.
+            if len(merged) > 256:
+                merged = dict(sorted(merged.items(), key=lambda item: item[1])[-256:])
+            self.last_home = merged
+            await self.store.async_save({
+                "counter": self._counter,
+                "events": self.events,
+                "last_home": self.last_home,
             })
 
     def recent(self, days: int = 7, limit: int = 1000) -> list[dict]:
