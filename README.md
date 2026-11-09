@@ -2,7 +2,7 @@
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.5 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.8 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -27,7 +27,7 @@ No manual Lovelace cards, resource registration or configuration.yaml entries
 are necessary. The panel is **administrator-only** because it displays
 household presence and local network identifiers.
 
-The dashboard has two tabs:
+The dashboard has three tabs:
 
 - **Home Presence:** current `home / away / unknown` state, **all** tracked
   `person.*` GPS sources and all entity-level **Home Presence**-labeled
@@ -38,6 +38,7 @@ The dashboard has two tabs:
   occupancy, while timestamps help identify stale trackers. The event log
   preserves source changes and MAC/IP/SSID **only when HA provides them**;
   latitude/longitude are never copied into the diagnostic history.
+- **Stale sensors:** current report-age coverage of numeric measurements, including monitored healthy readings, pending unknown/unavailable readings, confirmed missing reports and opt-in suspected frozen values. Search by entity/room and inspect the last report time, unchanged-value time, rule threshold and reason. Includes a 90-day transition and email history.
 - **Device availability:** current confirmed outages and pending
   disconnections, searchable history of pending, short recoveries (no email),
   confirmed OFFLINE and RECOVERED incidents, plus successful immediate-email
@@ -76,6 +77,66 @@ authenticated **administrators**. When the integration is removed, its
 sidebar panel is removed too; disabling it does not erase the separately
 persisted diagnostic history.
 
+
+## Stale sensor measurements (v0.3.8)
+
+The integration now includes a **separate** restart-safe monitor of physical numeric
+measurement sensors. It scans **every 15 minutes** and sends **Girts-only** alerts
+to the already configured notify entity **at 08:00 and 20:00 local time**.
+Emails are quiet: they contain only *newly flagged* and *cleared* readings since
+the last successful digest, plus a current flagged summary. If there are no
+changes, no email is sent. Failed emails leave transitions queued for retry
+at the next notification slot. This does **not** modify device-offline alerts
+or the Home Presence sensor.
+
+Eligibility defaults to registered, enabled, physical device-backed numeric
+measurement sensors. Air-quality, temperature, humidity, pressure, illuminance,
+power, voltage and current sensors are included. Diagnostic entities, link-speed
+counters, Wi-Fi signal metrics, battery levels, service/virtual devices and
+accumulating totals are excluded. Entities with recognised measurement classes
+or units can stay eligible during an unknown/unavailable state.
+
+**Entity-level labels** (create under Settings → Areas, labels & zones → Labels):
+
+- `stale_monitor_include`: monitor an entity outside the automatic selection
+- `stale_monitor_ignore`: always exclude (takes priority)
+- `stale_monitor_fast`: 3-hour missing-report timeout
+- `stale_monitor_slow`: 168-hour missing-report timeout
+- `stale_monitor_watch_value`: opt into a **suspected frozen** reading when
+  an unchanged value has exceeded its reporting threshold even though HA is
+  still receiving reports; this is a heuristic, not proof of failed hardware
+
+Default missing-report thresholds: **12 hours for air-quality, 48 for ambient,
+72 for electrical and 168 for other measurements**. For unknown/unavailable
+states the grace period is the smaller of the configured threshold and
+12 hours (air) or 24 hours (other). These thresholds deliberately match the
+previous automation. They can be overridden per entity with labels.
+
+The dashboard's **Stale sensors** tab shows all monitored entity IDs, latest
+value, time since the latest HA report, last change time, reason for flagging,
+threshold and any pending or suspected-frozen status. A button switches between
+flagged/pending readings and **All monitored**, so coverage can be audited.
+
+**Important limitation:** `last_reported` is refreshed when an integration
+writes an entity's state; Home Assistant does not independently poll every
+physical sensor. Some integrations report only *changed* readings, meaning
+an unchanged numeric value may be falsely marked as missing. On the other
+hand, a sensor constantly reporting a frozen zero looks healthy on reporting
+age alone. Use `stale_monitor_watch_value` selectively (e.g. on a particular
+PM2.5 sensor) after verifying its usual behaviour and interpreting the
+“SUSPECT” status rather than a confirmed hardware fault.
+
+The monitor uses a separate private HA Store, keyed by full entity IDs, so
+it needs **no Text helpers, hash truncation or 56-sensor cap**. Existing
+`input_text.stale_sensor_keys_a/b` helpers are not read or modified.
+Its history uses the existing 90-day admin-only diagnostic history.
+The new monitor starts fresh; historical helper hashes are **not migrated**.
+
+**After updating:** disable the old “Sensors - Stale measurements - Quiet
+email summary” automation to prevent duplicate notifications. The new
+monitor is enabled by default; it can be disabled in this integration's
+Options menu. Restart Home Assistant after updating via HACS, then open
+**Availability → Stale sensors** and use **All monitored** to check coverage.
 
 ## Tracker timestamps (v0.3.7)
 
