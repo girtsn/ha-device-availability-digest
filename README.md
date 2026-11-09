@@ -82,7 +82,9 @@ persisted diagnostic history.
 
 The integration now includes a **separate** restart-safe monitor of physical numeric
 measurement sensors. It scans **every 15 minutes** and sends **Girts-only** alerts
-to the already configured notify entity **at 08:00 and 20:00 local time**.
+to a **separately configurable stale-sensor notify entity** **at 08:00 and
+20:00 local time**. It defaults to `notify.email_girts` when that entity
+exists and otherwise uses the main availability notifier.
 Emails are quiet: they contain only *newly flagged* and *cleared* readings since
 the last successful digest, plus a current flagged summary. If there are no
 changes, no email is sent. Failed emails leave transitions queued for retry
