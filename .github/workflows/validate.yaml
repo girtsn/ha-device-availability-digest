@@ -27,6 +27,8 @@ jobs:
           node --input-type=module --check < custom_components/device_availability_digest/www/availability-date-range-picker.js
       - name: Test user-localized week selection
         run: node tests/test_date_range_locale.cjs
+      - name: Test Wi-Fi and GPS source evidence timestamps
+        run: node tests/test_presence_source_dates.cjs
       - name: Validate JSON
         run: |
           python -m json.tool hacs.json > /dev/null
