@@ -81,5 +81,8 @@ def ws_get_history(
         "pending": pending,
         "presence": hass.states.get("sensor.home_presence").state
                     if hass.states.get("sensor.home_presence") else "unknown",
+        # Current last-Home timestamps are independent of the selected
+        # 90-day event-history filter and survive normal HA restarts.
+        "source_last_home": dict(monitor.history.last_home),
         "retention_days": 90,
     })
