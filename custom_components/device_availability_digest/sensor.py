@@ -18,6 +18,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .presence import DEFAULT_AWAY_DELAY, decide_presence
+from .home_timestamps import is_home_source, reported_at
 from .const import DOMAIN
 
 LABEL_NAME = "Home Presence"
@@ -93,16 +94,27 @@ class HomePresenceSensor(SensorEntity):
             key=lambda s: s.entity_id,
         )
         positive: list[str] = []
-        for eid in self._labeled_entities():
+        labeled = self._labeled_entities()
+        observations: dict[str, str] = {}
+        for p in people:
+            if is_home_source(p.entity_id, p):
+                at = reported_at(p)
+                if at:
+                    observations[p.entity_id] = at
+        for eid in labeled:
             state = self.hass.states.get(eid)
             if state is None:
                 continue
             domain = eid.split(".", 1)[0]
-            if (
-                (domain in ("device_tracker", "sensor") and state.state == "home")
-                or (domain in ("binary_sensor", "input_boolean") and state.state == "on")
-            ):
+            if is_home_source(eid, state):
                 positive.append(eid)
+                at = reported_at(state)
+                if at:
+                    observations[eid] = at
+        if self._history and observations:
+            self.hass.async_create_task(
+                self._history.record_last_home(observations)
+            )
 
         # A person in unknown/unavailable must not permanently veto Away.
         # Require 20 minutes without ANY positive Home observation instead.
@@ -132,7 +144,8 @@ class HomePresenceSensor(SensorEntity):
                 p.entity_id for p in people
                 if p.state in ("unknown", "unavailable")
             ],
-            "configured_home_sources": len(self._labeled_entities()),
+            "configured_home_sources": len(labeled),
+            "labeled_home_sources": labeled,
         }
         previous = self._attr_native_value
         if (
@@ -216,6 +229,14 @@ class HomePresenceSensor(SensorEntity):
                     ssid=attrs.get("essid") or attrs.get("ssid")
                          or source_attrs.get("essid") or source_attrs.get("ssid"),
                 ))
+            # Capture the final Home report before a source changes to Away,
+            # including a Person whose GPS source goes offline.
+            if self._history and old and is_home_source(eid, old):
+                at = reported_at(old)
+                if at:
+                    self.hass.async_create_task(
+                        self._history.record_last_home({eid: at})
+                    )
             self._refresh()
 
         @callback
