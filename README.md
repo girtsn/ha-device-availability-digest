@@ -29,12 +29,15 @@ household presence and local network identifiers.
 
 The dashboard has two tabs:
 
-- **Home Presence:** current `home / away / unknown` state, the current
-  `person.*` states (and their originating GPS device tracker where
-  available), active trusted Home-positive sources, Home/Away/Unknown
-  transitions, and each contributing source's state change. It preserves
-  `entity_id`, `source_entity_id`, MAC, IP and SSID **when available in HA**,
-  together with the prior/current state and why the aggregate state changed.
+- **Home Presence:** current `home / away / unknown` state, **all** tracked
+  `person.*` GPS sources and all entity-level **Home Presence**-labeled
+  Wi-Fi/occupancy sources, including currently `not_home` or `unavailable`
+  devices. Each source shows its current state, **Last update** and
+  **Last seen Home** timestamps. GPS source timestamps are displayed separately
+  from Person state when available. Active Home sources still determine
+  occupancy, while timestamps help identify stale trackers. The event log
+  preserves source changes and MAC/IP/SSID **only when HA provides them**;
+  latitude/longitude are never copied into the diagnostic history.
 - **Device availability:** current confirmed outages and pending
   disconnections, searchable history of pending, short recoveries (no email),
   confirmed OFFLINE and RECOVERED incidents, plus successful immediate-email
@@ -73,6 +76,36 @@ authenticated **administrators**. When the integration is removed, its
 sidebar panel is removed too; disabling it does not erase the separately
 persisted diagnostic history.
 
+
+## Tracker timestamps (v0.3.7)
+
+The **Home Presence → Current evidence** section lists both **People / Companion
+App GPS** and **all Home Presence-labeled Wi-Fi sources**, even when they are
+disconnected or no longer confirming Home.
+
+- **Last update:** The actual last HA state-report timestamp
+  (`last_reported`, falling back to `last_updated` or the state-change time
+  in older HA frontend versions). For People, the Companion App GPS tracker
+  is preferred over the aggregate `person.*` entity when its source is
+  known. This is **not necessarily a fresh GPS fix**: it means HA received or
+  updated that entity's state.
+- **Last seen Home:** The latest timestamp at which the Person or labeled
+  source reported Home (or `on` for labeled occupancy/manual overrides).
+  Persisted in the integration's **private** diagnostic storage across
+  Home Assistant restarts, even when the source later reports Away.
+  It is recorded using the source's actual HA report/update timestamp, not
+  the time somebody opens the dashboard or the 30-second check time.
+  No GPS coordinates are saved.
+- **Unknown (`—`):** No positive Home report has been observed by this
+  integration yet, for example when a device is already Away on the first
+  installation of v0.3.7. Earlier Home timestamps are not invented or
+  reconstructed from missing historical data.
+
+This is **diagnostic only**: timestamps do not alter the 20-minute absence
+qualification or override presence decisions. The timestamp cache is
+bounded to 256 source IDs and is accessible only through the existing
+administrator-only diagnostics endpoint. Legacy event retention remains
+90 days / 5,000 events.
 
 ## Generic Home Presence (v0.2.0+)
 
