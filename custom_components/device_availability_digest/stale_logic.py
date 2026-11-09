@@ -69,6 +69,9 @@ def eligible_measurement(
     # remain eligible even though their current value is not numeric.
     if dc in AIR | AMBIENT | ELECTRICAL or group_for(entity_id, dc) == "air":
         return True
+    if state in BAD_STATES and (attributes.get("state_class") == "measurement"
+                                or attributes.get("unit_of_measurement") not in (None, "")):
+        return True
     try:
         numeric = isfinite(float(state))
     except (ValueError, TypeError):
