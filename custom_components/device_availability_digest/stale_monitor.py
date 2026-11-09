@@ -113,6 +113,7 @@ class StaleSensorMonitor:
             registry = entity_registry.async_get(self.hass)
             devices = device_registry.async_get(self.hass)
             old_active = self.active
+            previous_bad = self.bad_since
             next_active: dict[str, dict] = {}
             next_bad: dict[str, str] = {}
             rows: list[dict] = []
@@ -198,9 +199,6 @@ class StaleSensorMonitor:
             )
             self.checked_at = _iso(now)
             self.started = True
-            if transitions or next_bad != self.bad_since or bool(self.queue):
-                # The state map is persisted once per scan only when needed.
-                pass
             if transitions:
                 self.queue.extend(transitions)
                 self.queue = self.queue[-1000:]
@@ -216,9 +214,8 @@ class StaleSensorMonitor:
                         )
             # Persist any transition or bad-state timer change, not hourly
             # age changes; measurements are rebuilt from live HA states.
-            if transitions or next_bad != getattr(self, "_persisted_bad_since", {}):
+            if transitions or next_bad != previous_bad:
                 await self._save()
-                self._persisted_bad_since = dict(next_bad)
             if send_digest:
                 await self._digest(now)
 
