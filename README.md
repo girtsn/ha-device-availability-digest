@@ -82,8 +82,8 @@ read-only, vendor-neutral household presence state:
 | State | Meaning |
 | --- | --- |
 | `home` | A Home Assistant `person.*` is `home`, or a trusted labeled source positively reports a person at home |
-| `away` | **Every** HA Person has been outside Home continuously for at least **20 minutes**, and no labeled source reports Home |
-| `unknown` | No confirmed Home, but missing/unknown/recently changed location prevents confirming Away |
+| `away` | No Person or trusted labeled Wi-Fi/occupancy source has confirmed Home for **20 continuous minutes**, with all Persons either Away, at other zones or Unknown/Unavailable |
+| `unknown` | No positive Home evidence yet, but the new **20-minute no-Home confirmation** has not elapsed, or no Person entities are configured |
 
 Presence detection is **independent of the availability digest notification logic**.
 It does not send messages, switch Tado, or control any other devices.
@@ -110,17 +110,32 @@ Use `sensor.home_presence` in your own automations.
    Existing installations may have chosen another entity ID if
    `sensor.home_presence` already exists; inspect the integration's entities.
 
-**Important asymmetry:** Disconnecting from Wi-Fi or losing a labeled signal
-**never establishes Away on its own**. Only valid HA Person GPS-derived
-location states can do that. An unconfigured or unavailable Person blocks
-Away. All `person.*` entities participate; remove out-of-scope Persons or
-scope the configuration if they are not household members.
+**Revised Away rule (v0.3.6):** As soon as any Person is `home` or any
+trusted source labeled **Home Presence** positively reports Home, the
+household is **Home**, regardless of the other phones' states. If all
+People are `not_home`, at other zones, `unknown` or `unavailable`,
+and **none** of the labeled Wi-Fi/occupancy sources confirms Home,
+the household becomes **Away after 20 continuous minutes without
+positive Home evidence**. A phone in power saving mode or temporarily
+unable to provide GPS updates can no longer block Away indefinitely.
+Wi-Fi disconnection on its own does not trigger an *instant* Away.
 
-The sensor refreshes when relevant states/labels change and every 30 seconds
-to complete the 20-minute absence qualification, with conservative behavior
-across Home Assistant restarts. A phone with stale-but-valid `not_home`
-may still be mistaken for recently confirmed Away, so test background
-tracking before using it for safety-critical automations.
+The 20-minute no-Home timer starts when the integration first observes
+no positive Home source, resets whenever Home is confirmed, and starts
+fresh after a Home Assistant integration restart. The sensor refreshes
+every 30 seconds as well as on relevant state changes. Attributes
+`absence_candidate_since`, `unknown_or_unavailable_people`, and
+`configured_home_sources` are exposed for troubleshooting.
+
+**Safety trade-off:** If all phone GPS signals are unknown while trusted
+Wi-Fi sensors are offline, incorrectly configured, or unavailable for
+20 minutes, the household can now be reported Away **even if someone is
+physically home**. Use this for heating setback and other reversible
+comfort automations, not alarms, locks, or other safety-critical actions.
+Configure a reliable Wi-Fi tracker for each household phone and, if
+needed, a reliable, explicitly labeled manual Home override.
+All `person.*` entities still participate; exclude extraneous Persons
+from Home Assistant's household configuration.
 
 ### Example consumer automation
 
