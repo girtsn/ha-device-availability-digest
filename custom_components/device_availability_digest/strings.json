@@ -33,7 +33,8 @@
           "auto_exclude_tvs": "Automatically exclude TVs",
           "excluded_entities": "Excluded entity IDs",
           "excluded_device_entities": "Excluded device anchors (entity IDs)",
-          "connectivity_entities": "Explicit connectivity sensors (entity IDs)"
+          "connectivity_entities": "Explicit connectivity sensors (entity IDs)",
+          "stale_monitor_enabled": "Monitor stale sensor measurements (15-minute checks, email at 08:00 and 20:00)"
         }
       }
     },
