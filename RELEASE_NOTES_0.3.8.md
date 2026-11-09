@@ -6,7 +6,8 @@
   a real-time audit of monitored numeric sensors (healthy, pending, stale,
   suspected frozen), reporting timestamps, threshold and device/area details.
 - 15-minute scans; **quiet delta-only emails at 08:00 and 20:00 local time**
-  through the integration's configured notification entity and subject prefix.
+  through a separately configured stale-notify entity and the existing subject
+  prefix. `notify.email_girts` is preferred when available.
   Failed sends retain the queue; reports and last successful notification time
   survive restart in a **separate private Home Assistant Store**.
 - Full entity IDs replace MD5-truncated Text-helper keys, removing the
