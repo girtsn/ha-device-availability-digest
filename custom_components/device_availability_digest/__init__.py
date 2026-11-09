@@ -100,7 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await monitor.load()
     if options.get("stale_monitor_enabled", True):
         monitor.stale = StaleSensorMonitor(
-            hass, monitor._send, monitor._subject, monitor.history
+            hass, monitor._send_stale, monitor._subject, monitor.history
         )
         await monitor.stale.load()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = monitor
@@ -191,6 +191,11 @@ class AvailabilityDigest:
         self.excluded_device_anchors = set(options.get(CONF_EXCLUDED_DEVICE_ANCHORS, []))
         self.connectivity_entities = set(options.get(CONF_CONNECTIVITY_ENTITIES, []))
         self.auto_exclude_tvs = options.get(CONF_AUTO_EXCLUDE_TVS, True)
+        self.stale_notify_entity = (
+            options.get("stale_notify_entity")
+            or ("notify.email_girts" if hass.states.get("notify.email_girts")
+                else self.notify_entity)
+        )
         self._representatives: dict[str, str] = {}
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
         self.state = AvailabilityState()
@@ -507,6 +512,20 @@ class AvailabilityDigest:
             return True
         except Exception:  # Keep state for retry if notify provider fails.
             _LOGGER.exception("Device availability digest email failed; will retry")
+            return False
+
+    async def _send_stale(self, title: str, message: str) -> bool:
+        """Send stale sensor findings to their own notification recipient."""
+        try:
+            await self.hass.services.async_call(
+                "notify", "send_message",
+                {"title": title, "message": message},
+                target={"entity_id": self.stale_notify_entity},
+                blocking=True,
+            )
+            return True
+        except Exception:
+            _LOGGER.exception("Stale measurement email failed; will retry")
             return False
 
     def _subject(self, detail: str) -> str:
