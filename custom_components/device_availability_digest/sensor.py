@@ -49,6 +49,9 @@ class HomePresenceSensor(SensorEntity):
         self._entry_id = entry_id
         self._history = None
         self._initialised = False
+        # Dwell time begins once no person or trusted input confirms Home.
+        # It is intentionally reset on integration restart for safety.
+        self._absence_since = None
         self._labeled_cache: list[str] | None = None
         self._attr_extra_state_attributes: dict[str, Any] = {
             "tracked_people": [],
@@ -101,16 +104,35 @@ class HomePresenceSensor(SensorEntity):
             ):
                 positive.append(eid)
 
+        # A person in unknown/unavailable must not permanently veto Away.
+        # Require 20 minutes without ANY positive Home observation instead.
+        has_home_evidence = bool(positive) or any(
+            p.state == "home" for p in people
+        )
+        if has_home_evidence or not people:
+            self._absence_since = None
+        elif self._absence_since is None:
+            self._absence_since = now
+
         outcome = decide_presence(
             [(p.state, p.last_changed) for p in people],
             positive,
             now,
             DEFAULT_AWAY_DELAY,
+            absence_since=self._absence_since,
         )
         attributes = {
             "tracked_people": [p.entity_id for p in people],
             "active_home_evidence": positive,
             "absence_confirmation_minutes": 20,
+            "absence_candidate_since": (
+                self._absence_since.isoformat() if self._absence_since else None
+            ),
+            "unknown_or_unavailable_people": [
+                p.entity_id for p in people
+                if p.state in ("unknown", "unavailable")
+            ],
+            "configured_home_sources": len(self._labeled_entities()),
         }
         previous = self._attr_native_value
         if (
@@ -130,9 +152,12 @@ class HomePresenceSensor(SensorEntity):
             elif positive:
                 reason = "Trusted labeled source confirms Home"
             elif outcome == "away":
-                reason = "All Person locations confirmed outside Home for 20 minutes"
+                reason = (
+                    "No positive GPS Person or trusted Wi-Fi Home evidence "
+                    "for 20 minutes; unknown Persons do not veto Away"
+                )
             else:
-                reason = "Insufficient or recently changed location evidence"
+                reason = "Waiting for 20 minutes without positive Home evidence"
             self.hass.async_create_task(self._history.record(
                 "presence_state",
                 previous=previous if self._initialised else None,
