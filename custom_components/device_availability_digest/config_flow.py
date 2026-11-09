@@ -33,6 +33,7 @@ def _read_private_profile(filepath: str) -> dict[str, Any]:
             "notify_entity", "email_subject_prefix", "offline_minutes", "window_minutes",
             "excluded_entities", "excluded_device_entities",
             "connectivity_entities", "auto_exclude_tvs", "stale_monitor_enabled",
+            "stale_notify_entity",
         }
         result = {key: value for key, value in data.items() if key in keys}
         for key in ("excluded_entities", "excluded_device_entities", "connectivity_entities"):
@@ -87,6 +88,7 @@ def discover_defaults(hass: HomeAssistant) -> dict[str, Any]:
         CONF_CONNECTIVITY_ENTITIES: [],
         CONF_AUTO_EXCLUDE_TVS: True,
         "stale_monitor_enabled": True,
+        "stale_notify_entity": "notify.email_girts" if "notify.email_girts" in available else (email or (available[0] if available else "")),
     }
 
 
@@ -105,6 +107,7 @@ def _form(values: dict[str, Any], advanced: bool) -> vol.Schema:
         schema.update({
             vol.Required(CONF_AUTO_EXCLUDE_TVS, default=values.get(CONF_AUTO_EXCLUDE_TVS, True)): bool,
             vol.Required("stale_monitor_enabled", default=values.get("stale_monitor_enabled", True)): bool,
+            vol.Required("stale_notify_entity", default=values.get("stale_notify_entity") or values.get(CONF_NOTIFY, "")): str,
             vol.Optional(CONF_EXCLUDED_ENTITIES,
                          default=", ".join(values.get(CONF_EXCLUDED_ENTITIES, []))): str,
             vol.Optional(CONF_EXCLUDED_DEVICE_ANCHORS,
@@ -161,7 +164,7 @@ class AvailabilityDigestOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict | None = None):
         values = {**self.config_entry.data, **self.config_entry.options}
         if user_input is not None:
-            if not user_input.get(CONF_NOTIFY, "").startswith("notify."):
+            if not user_input.get(CONF_NOTIFY, "").startswith("notify.") or not user_input.get("stale_notify_entity", values.get("stale_notify_entity") or user_input.get(CONF_NOTIFY, "")).startswith("notify."):
                 return self.async_show_form(
                     step_id="init", data_schema=_form({**values, **user_input}, True),
                     errors={CONF_NOTIFY: "invalid_notify"},
