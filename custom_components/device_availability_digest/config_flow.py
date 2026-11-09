@@ -32,7 +32,7 @@ def _read_private_profile(filepath: str) -> dict[str, Any]:
         keys = {
             "notify_entity", "email_subject_prefix", "offline_minutes", "window_minutes",
             "excluded_entities", "excluded_device_entities",
-            "connectivity_entities", "auto_exclude_tvs",
+            "connectivity_entities", "auto_exclude_tvs", "stale_monitor_enabled",
         }
         result = {key: value for key, value in data.items() if key in keys}
         for key in ("excluded_entities", "excluded_device_entities", "connectivity_entities"):
@@ -86,6 +86,7 @@ def discover_defaults(hass: HomeAssistant) -> dict[str, Any]:
         CONF_EXCLUDED_DEVICE_ANCHORS: excluded[:],
         CONF_CONNECTIVITY_ENTITIES: [],
         CONF_AUTO_EXCLUDE_TVS: True,
+        "stale_monitor_enabled": True,
     }
 
 
@@ -103,6 +104,7 @@ def _form(values: dict[str, Any], advanced: bool) -> vol.Schema:
     if advanced:
         schema.update({
             vol.Required(CONF_AUTO_EXCLUDE_TVS, default=values.get(CONF_AUTO_EXCLUDE_TVS, True)): bool,
+            vol.Required("stale_monitor_enabled", default=values.get("stale_monitor_enabled", True)): bool,
             vol.Optional(CONF_EXCLUDED_ENTITIES,
                          default=", ".join(values.get(CONF_EXCLUDED_ENTITIES, []))): str,
             vol.Optional(CONF_EXCLUDED_DEVICE_ANCHORS,
