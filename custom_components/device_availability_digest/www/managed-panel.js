@@ -35,6 +35,16 @@ h3{font-size:15px;font-weight:600;margin:0 0 7px}
 .badge.unknown{background:#f6f0df;color:#7b6420}
 .pills{display:flex;flex-wrap:wrap;gap:8px}
 .pill{font-size:12px;border-radius:6px;padding:6px 8px;background:var(--secondary-background-color,#efefef);overflow-wrap:anywhere}
+.evidence-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:10px;margin:10px 0 22px}
+.evidence-item{padding:12px;border:1px solid var(--divider-color,#ddd);border-radius:10px;min-width:0}
+.evidence-name{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.evidence-sub{font-size:11px;color:var(--secondary-text-color,#777);overflow-wrap:anywhere;margin-top:3px}
+.evidence-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:9px}
+.evidence-dates{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.evidence-dates>div{min-width:0}
+.evidence-dates small{display:block;font-size:11px;color:var(--secondary-text-color,#777)}
+.evidence-dates time{display:block;font-size:12px;overflow-wrap:anywhere;margin-top:3px}
+@media(max-width:460px){.evidence-dates{grid-template-columns:1fr}}
 .small{font-size:12px}.error{color:var(--error-color,#b33);margin:12px 0;white-space:pre-wrap}
 .search{display:block;width:100%;padding:11px;border-radius:9px;border:1px solid var(--divider-color,#ddd);background:var(--primary-background-color,#fff);color:inherit;font:inherit;margin-bottom:12px}
 .timeline{display:flex;align-items:flex-end;gap:4px;min-height:110px;overflow-x:auto;padding:7px 1px 4px;border-bottom:1px solid var(--divider-color,#ddd)}
@@ -255,6 +265,49 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       card.append(E("div","Showing the latest 750 matching events. Narrow the date range or search for specific IDs.","muted small"));
     return card;
   }
+  _sourceEvidence(id, state, lastHome, {isPerson=false, tracker=null}={}){
+    const current=state?.state||"unknown";
+    const isHome=isPerson?current==="home":
+      (id.startsWith("binary_sensor.")||id.startsWith("input_boolean.")
+        ? current==="on":current==="home");
+    const reported=tracker||state;
+    const lastUpdate=reported?.last_reported||reported?.last_updated||
+      reported?.last_changed||null;
+    // The persistent Home cache is populated after installing this version.
+    // If already Home, the current HA timestamp is a truthful fallback.
+    const lastPositive=lastHome||(isHome?
+      (state?.last_reported||state?.last_updated||state?.last_changed):null);
+    const card=E("div",null,"evidence-item");
+    const heading=E("div",null,"evidence-heading");
+    const names=E("div");
+    names.append(E("div",state?.attributes?.friendly_name||id,"evidence-name"));
+    names.append(E("div",id,"evidence-sub"));
+    if(isPerson&&state?.attributes?.source)
+      names.append(E("div","GPS source: "+state.attributes.source,"evidence-sub"));
+    const net=state?.attributes||{};
+    if(!isPerson&&(net.ip||net.mac||net.essid||net.ssid))
+      names.append(E("div",
+        [net.ip&&"IP "+net.ip,net.mac&&"MAC "+net.mac,
+          (net.essid||net.ssid)&&"SSID "+(net.essid||net.ssid)]
+          .filter(Boolean).join(" · "),"evidence-sub"));
+    heading.append(names,this._badge(current));
+    card.append(heading);
+    const dates=E("div",null,"evidence-dates");
+    for(const [title,value] of [
+      [tracker?"Last GPS tracker update":"Last update",lastUpdate],
+      ["Last seen Home",lastPositive]
+    ]){
+      const cell=E("div");
+      cell.append(E("small",title));
+      const valueEl=E("time",fmt(value));
+      if(value)valueEl.dateTime=value;
+      cell.append(valueEl);
+      dates.append(cell);
+    }
+    card.append(dates);
+    return card;
+  }
+
   _presence(grid,data){
     const current=this._hass?.states?.["sensor.home_presence"];
     const status=current?.state||data.presence||"unknown";
@@ -265,26 +318,32 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     grid.append(this._stat("Tracked people",people.length,"Person location entities"));
     grid.append(this._stat("Positive Home sources",evidence.length,"Trusted labeled signals currently confirming Home"));
     const sources=this._card("Current evidence",12);
+    const homeTimes=data.source_last_home||{};
     sources.append(E("h3","People / Companion App GPS"));
-    if(!people.length)sources.append(E("div","No Person locations configured; Away is intentionally blocked.","muted"));
-    const peopleBox=E("div",null,"pills");
+    if(!people.length)sources.append(E("div","No Person entities configured; Away is intentionally blocked.","muted"));
+    const peopleBox=E("div",null,"evidence-list");
     for(const id of people){
       const p=this._hass?.states?.[id];
-      peopleBox.append(E("div",id+" · "+(p?.state??"unknown")+
-        (p?.attributes?.source?" · via "+p.attributes.source:""),"pill"));
+      const trackerId=p?.attributes?.source;
+      const tracker=trackerId?this._hass?.states?.[trackerId]:null;
+      peopleBox.append(this._sourceEvidence(id,p,homeTimes[id],
+        {isPerson:true,tracker}));
     }
     sources.append(peopleBox);
-    sources.append(E("h3","Positive evidence · Home Presence label"));
-    if(!evidence.length)sources.append(E("div","No additional source currently confirms Home.","muted"));
-    const active=E("div",null,"pills");
-    for(const id of evidence){
-      const s=this._hass?.states?.[id],a=s?.attributes||{};
-      const parts=[id,s?.state||"unknown",a.ip&&"IP "+a.ip,a.mac&&"MAC "+a.mac];
-      active.append(E("div",parts.filter(Boolean).join(" · "),"pill"));
+    sources.append(E("h3","Trusted Home sources · Wi-Fi and manual overrides"));
+    const labeled=current?.attributes?.labeled_home_sources||[];
+    if(!labeled.length)sources.append(E("div",
+      "No Home Presence-labeled sources configured. Add each trusted Wi-Fi phone tracker as an entity-level label.",
+      "muted small"));
+    const wifi=E("div",null,"evidence-list");
+    for(const id of labeled){
+      const s=this._hass?.states?.[id];
+      wifi.append(this._sourceEvidence(id,s,homeTimes[id]));
     }
-    sources.append(active);
+    sources.append(wifi);
     sources.append(E("div",
-      "Only Companion App / Person location establishes Away. Wi-Fi disappearance alone does not. Source events record MAC/IP where Home Assistant exposes them; GPS coordinates are never logged.","muted small"));
+      "Last update is the latest timestamp Home Assistant reports for the tracker (not a guarantee of fresh GPS or Wi-Fi). Last seen Home is the most recent positive Home observation retained by this integration, including after departure and Home Assistant restarts. A dash means no known observation yet. No GPS coordinates are copied into this diagnostic cache.",
+      "muted small"));
     grid.append(sources);
     grid.append(this._chart(records,e=>e.kind==="presence_state"));
     grid.append(this._events(records.slice().reverse(),"Home Presence · state changes and source diagnostics"));
