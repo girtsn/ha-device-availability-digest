@@ -82,7 +82,7 @@ class RetiredIncidentTests(unittest.TestCase):
             _is_cloud=lambda eid, attrs: eid == "binary_sensor.api",
             _is_tado_api=lambda eid, attrs: False,
             _representative=lambda did: "sensor.real",
-            connectivity_entities=set(),
+            connectivity_entities={"binary_sensor.api"},
         )
         monitored = method("_monitored")
         self.assertFalse(monitored(monitor, "sensor.pc_link_speed", {}))
