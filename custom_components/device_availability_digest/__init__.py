@@ -29,7 +29,10 @@ from .const import (
     CONF_CONNECTIVITY_ENTITIES, CONF_AUTO_EXCLUDE_TVS,
     CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX,
 )
-from .model import AvailabilityState, format_subject, is_nonphysical_device, parse, utcnow
+from .model import (
+    AvailabilityState, format_subject, is_nonphysical_device,
+    is_link_speed_entity, is_diagnostic_entity, parse, utcnow,
+)
 from .history import DiagnosticHistory
 from .diagnostics_api import ws_get_history
 from .stale_monitor import StaleSensorMonitor
@@ -136,6 +139,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @callback
     def on_registry_changed(_: Event) -> None:
         monitor._representatives.clear()
+        # A disabled/deleted/reassigned entity must not remain OFFLINE until
+        # the next restart. Reconcile promptly with the current registry.
+        if monitor.started:
+            hass.async_create_task(monitor.reconcile())
 
     entry.async_on_unload(hass.bus.async_listen("entity_registry_updated", on_registry_changed))
     entry.async_on_unload(hass.bus.async_listen("device_registry_updated", on_registry_changed))
@@ -243,14 +250,23 @@ class AvailabilityDigest:
             device.entry_type, device.manufacturer, device.model
         ))
 
-    def _prune_nonphysical_incidents(self) -> bool:
-        """Retire persisted service/room incidents without recovery messages."""
+    def _prune_unmonitored_incidents(self) -> bool:
+        """Retire saved incidents and queued alerts outside today's policy.
+
+        Handles deleted/disabled registry entries, removed HA states, explicit
+        exclusions, diagnostic proxies and a changed device representative.
+        This deliberately does not erase bounded diagnostic history or invent
+        RECOVERED events for entities that are no longer monitored.
+        """
         ids = set(self.state.pending) | set(self.state.active)
         if self.state.batch:
             ids.update(item["entity_id"] for item in self.state.batch["events"])
-        return self.state.discard_entities({
-            eid for eid in ids if self._nonphysical_endpoint(eid)
-        })
+        obsolete = set()
+        for eid in ids:
+            state = self.hass.states.get(eid)
+            if state is None or not self._monitored(eid, dict(state.attributes)):
+                obsolete.add(eid)
+        return self.state.discard_entities(obsolete)
 
     def _source_integration(self, eid: str) -> str:
         entry = entity_registry.async_get(self.hass).async_get(eid)
@@ -292,15 +308,25 @@ class AvailabilityDigest:
             or self._is_tado_api(eid, attrs))
 
     def _representative(self, did: str) -> str:
-        if did in self._representatives:
-            return self._representatives[did]
         registry = entity_registry.async_get(self.hass)
+        cached = self._representatives.get(did)
+        if cached:
+            entry = registry.async_get(cached)
+            state = self.hass.states.get(cached)
+            if (entry is not None and entry.disabled_by is None
+                    and state is not None and not is_link_speed_entity(cached)
+                    and (not is_diagnostic_entity(getattr(entry, "entity_category", None))
+                         or self._is_cloud(cached, dict(state.attributes))
+                         or cached in self.connectivity_entities)):
+                return cached
+            self._representatives.pop(did, None)
         device = device_registry.async_get(self.hass).async_get(did)
         name = ((device.name_by_user or device.name) if device else "") or ""
         best, best_score = "", 9999
         for entry in registry.entities.values():
             eid = entry.entity_id
-            if entry.device_id != did or entry.disabled_by is not None or eid in self.excluded_entities:
+            if (entry.device_id != did or entry.disabled_by is not None
+                    or eid in self.excluded_entities or is_link_speed_entity(eid)):
                 continue
             if self.hass.states.get(eid) is None:
                 continue
@@ -311,6 +337,9 @@ class AvailabilityDigest:
             is_cloud = domain == "binary_sensor" and self._is_cloud(
                 eid, dict(state.attributes) if state else {}
             )
+            if (is_diagnostic_entity(getattr(entry, "entity_category", None))
+                    and not (is_cloud or eid in self.connectivity_entities)):
+                continue
             bad = (any(word in eid for word in ("firmware", "update", "identify", "battery", "child_lock", "restart", "diagnostic"))
                    or eid.endswith("_led")
                    or ("volume" in eid and not eid.endswith("_status") and domain != "media_player")
@@ -341,8 +370,15 @@ class AvailabilityDigest:
         return best
 
     def _monitored(self, eid: str, attrs: dict) -> bool:
-        did = self._device_id(eid)
+        entry = entity_registry.async_get(self.hass).async_get(eid)
+        if (entry is None or entry.disabled_by is not None
+                or is_link_speed_entity(eid)):
+            return False
+        did = entry.device_id
         if self._ignored(eid, did):
+            return False
+        if (is_diagnostic_entity(getattr(entry, "entity_category", None))
+                and not (eid in self.connectivity_entities or self._is_cloud(eid, attrs))):
             return False
         if eid in self.connectivity_entities:
             return True
@@ -381,16 +417,22 @@ class AvailabilityDigest:
         eid = event.data.get("entity_id", "")
         old = event.data.get("old_state")
         new = event.data.get("new_state")
-        if not eid or new is None or (old and old.state == new.state):
+        if not eid or (old and new and old.state == new.state):
+            return
+        if new is None:
+            # An entity can disappear without ever reporting a healthy state.
+            async with self.lock:
+                if self._prune_unmonitored_incidents():
+                    await self.save()
             return
         attrs = dict(new.attributes)
         if old:
             attrs = {**old.attributes, **attrs}
         async with self.lock:
-            if self._nonphysical_endpoint(eid):
-                # Nonphysical service/zone incidents must never be revived
-                # merely because an unrelated room entity changes state.
-                if self._prune_nonphysical_incidents():
+            if not self._monitored(eid, attrs):
+                # Explicit exclusions and changed representatives are not
+                # recoveries; withdraw any stale saved incident silently.
+                if self.state.discard_entities({eid}):
                     await self.save()
                 return
             now = utcnow()
@@ -399,8 +441,6 @@ class AvailabilityDigest:
             if self.state.due(now):
                 await self._finish(now)
             tracked = eid in self.state.pending or eid in self.state.active
-            if not tracked and not self._monitored(eid, attrs):
-                return
             info = self._info(eid, attrs)
             if tracked:
                 info["cloud"] = self.state.pending.get(eid, self.state.active.get(eid, info)).get("cloud", info["cloud"])
@@ -440,9 +480,9 @@ class AvailabilityDigest:
         """Re-evaluate confirmed/pending outages after a restart; seed new ones."""
         async with self.lock:
             self.started = True
-            # Reclassify persisted incidents before sending overdue digests:
-            # HA service objects and tado Zones are not physical endpoints.
-            if self._prune_nonphysical_incidents():
+            # Reconcile stored incidents against current device/entity policy
+            # before an overdue email can include retired entries.
+            if self._prune_unmonitored_incidents():
                 await self.save()
             when = utcnow()
             if self.state.due(when):
@@ -478,6 +518,10 @@ class AvailabilityDigest:
             await self._tick_locked(utcnow())
 
     async def _tick_locked(self, now: datetime) -> None:
+        # The live registry is authoritative, even for pending and queued
+        # outages. Do this before dispatching any scheduled email.
+        if self._prune_unmonitored_incidents():
+            await self.save()
         # Flush before adding new confirmed events so a fixed window never slides.
         if self.state.due(now):
             await self._finish(now)

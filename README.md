@@ -1,5 +1,8 @@
 # Device Availability Digest
 
+**v0.3.9 monitoring cleanup:** Current OFFLINE/PENDING records and queued alerts are automatically reconciled against the live HA entity/device registry after startup, on registry changes and during the 30-second monitoring tick. Deleted, disabled, excluded, removed and no-longer-representative entities are retired without false recovery emails; historical events remain available. UniFi `*_link_speed` readings and ordinary diagnostic entities are not used as availability proxies (explicit real connectivity sensors remain eligible).
+
+
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
 **Status: v0.3.8 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.

@@ -22,6 +22,17 @@ def format_subject(prefix: str, detail: str) -> str:
     return f"{prefix.strip()} {detail}".strip()
 
 
+def is_link_speed_entity(entity_id: str) -> bool:
+    """Link-speed readings are diagnostics, not reliable availability signals."""
+    name = entity_id.partition(".")[2].casefold()
+    return name == "link_speed" or name.endswith("_link_speed")
+
+
+def is_diagnostic_entity(category: object) -> bool:
+    """Accept Home Assistant's EntityCategory enum or its stored value."""
+    return getattr(category, "value", category) == "diagnostic"
+
+
 def is_service_device(entry_type: object) -> bool:
     """True for registry service/virtual devices, not physical devices."""
     return getattr(entry_type, "value", entry_type) == "service"

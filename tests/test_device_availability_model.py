@@ -5,7 +5,10 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "device_availability_digest"))
-from model import AvailabilityState, format_subject, is_nonphysical_device, is_service_device
+from model import (
+    AvailabilityState, format_subject, is_nonphysical_device, is_service_device,
+    is_link_speed_entity, is_diagnostic_entity,
+)
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
 D = timedelta(minutes=5)
@@ -17,6 +20,25 @@ def info(name="device", cloud=False):
 
 
 class DigestTests(unittest.TestCase):
+    def test_link_speed_is_not_an_availability_signal(self):
+        self.assertTrue(is_link_speed_entity("sensor.edgars_pc_link_speed"))
+        self.assertTrue(is_link_speed_entity("sensor.default_link_speed"))
+        self.assertTrue(is_link_speed_entity("sensor.link_speed"))
+        self.assertFalse(is_link_speed_entity("binary_sensor.vaillant_cloud_connection_state"))
+        self.assertFalse(is_link_speed_entity("sensor.power"))
+
+    def test_diagnostic_category_accepts_enum_or_text(self):
+        from enum import Enum
+
+        class Category(Enum):
+            DIAGNOSTIC = "diagnostic"
+            CONFIG = "config"
+
+        self.assertTrue(is_diagnostic_entity("diagnostic"))
+        self.assertTrue(is_diagnostic_entity(Category.DIAGNOSTIC))
+        self.assertFalse(is_diagnostic_entity(Category.CONFIG))
+        self.assertFalse(is_diagnostic_entity(None))
+
     def test_service_device_filter(self):
         from enum import Enum
 
