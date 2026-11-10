@@ -47,6 +47,12 @@ h3{font-size:15px;font-weight:600;margin:0 0 7px}
 @media(max-width:460px){.evidence-dates{grid-template-columns:1fr}}
 .small{font-size:12px}.error{color:var(--error-color,#b33);margin:12px 0;white-space:pre-wrap}
 .search{display:block;width:100%;padding:11px;border-radius:9px;border:1px solid var(--divider-color,#ddd);background:var(--primary-background-color,#fff);color:inherit;font:inherit;margin-bottom:12px}
+.mode-track{position:relative;height:40px;background:var(--secondary-background-color,#eee);border-radius:7px;overflow:hidden;margin-top:14px}
+.mode-segment{position:absolute;top:0;height:100%;min-width:1px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;white-space:nowrap;overflow:hidden}
+.mode-empty{position:absolute;left:12px;top:12px;font-size:12px;color:var(--secondary-text-color,#777)}
+.mode-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:12px}
+.mode-legend-item{display:inline-flex;align-items:center;gap:6px}
+.mode-swatch{width:11px;height:11px;border-radius:3px}
 .timeline{display:flex;align-items:flex-end;gap:4px;min-height:110px;overflow-x:auto;padding:7px 1px 4px;border-bottom:1px solid var(--divider-color,#ddd)}
 .barcol{min-width:9px;max-width:24px;flex:1 0 9px;display:flex;flex-direction:column;justify-content:end;height:96px}
 .bar{width:100%;border-radius:3px 3px 0 0;min-height:0;background:var(--primary-color,#367cbb)}
@@ -73,6 +79,19 @@ const E=(name,text,className)=>{
 };
 const fmt=(ts)=>{if(!ts)return "—";const d=new Date(ts);return isNaN(d)?String(ts):d.toLocaleString();};
 const statusClass=(s)=>String(s||"").toLowerCase();
+const MODE_COLORS={home:"#218657",away:"#d38221",unknown:"#949ba4",unavailable:"#949ba4"};
+const modeState=value=>{
+  const state=String(value??"unknown").toLowerCase();
+  return Object.hasOwn(MODE_COLORS,state)?state:"unknown";
+};
+const modeLabel=value=>value==="home"?"Home":value==="away"?"Away":
+  value==="unavailable"?"Unavailable":"Unknown";
+const modeEpoch=entry=>{
+  const value=entry.lu??entry.lc??entry.last_changed??entry.last_updated;
+  if(typeof value==="number")return value<1e11?value*1000:value;
+  const at=Date.parse(value);
+  return Number.isFinite(at)?at:NaN;
+};
 const isSourceDetails=e=>e.kind==="presence_details"||
   (e.kind==="presence_source"&&e.previous!=null&&e.previous===e.state);
 const eventTitle=(e)=>{
@@ -96,6 +115,8 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     this._pickerReady=false;this._pickerPromise=null;this._pickerError="";
     this._loading=false;this._reloadQueued=false;this._error="";this._search="";this._tick=null;
     this._lastLoad=0;this._route=null;this._narrow=false;this._panel=null;
+    this._modeHistory=[];this._modeHistoryKey="";this._modeHistoryError="";
+    this._modeHistoryLoading=false;this._modeRequest=0;
   }
   set hass(v){
     this._hass=v;
@@ -104,7 +125,10 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   }
   set panel(v){this._panel=v;}
   set route(v){this._route=v;const p=(v?.path||"").split("/").filter(Boolean)[0];
-    if((p==="devices"||p==="presence"||p==="stale")&&p!==this._tab){this._tab=p;this._render();}}
+    if((p==="devices"||p==="presence"||p==="stale")&&p!==this._tab){
+      this._tab=p;this._render();
+      if(p==="presence")this._loadModeHistory();
+    }}
   set narrow(v){this._narrow=!!v;}
   async _ensurePicker(){
     if(this._pickerReady||this._pickerPromise)return this._pickerPromise;
@@ -127,10 +151,14 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     if(this._hass)this._load();
     this._tick??=setInterval(()=>this._load(),60000);
   }
-  disconnectedCallback(){if(this._tick!==null){clearInterval(this._tick);this._tick=null;}}
+  disconnectedCallback(){
+    this._modeRequest++;
+    if(this._tick!==null){clearInterval(this._tick);this._tick=null;}
+  }
   async _load(){
     if(this._loading){this._reloadQueued=true;return;}
     if(!this._hass?.callWS)return;
+    if(this._tab==="presence")this._loadModeHistory();
     this._loading=true;
     const selected={...this._range};
     try{
@@ -148,6 +176,49 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       this._loading=false;
       if(this.isConnected)this._render();
       if(this._reloadQueued){this._reloadQueued=false;this._load();}
+    }
+  }
+  async _loadModeHistory(){
+    if(!this.isConnected||!this._hass?.callWS)return;
+    const start=Date.parse(this._range.start);
+    const end=Math.min(Date.parse(this._range.end),Date.now());
+    const key=this._range.start+"|"+this._range.end;
+    const request=++this._modeRequest;
+    if(this._modeHistoryKey!==key)this._modeHistory=[];
+    this._modeHistoryKey=key;
+    this._modeHistoryLoading=true;
+    this._modeHistoryError="";
+    if(!this._hass.states?.["sensor.home_presence"]||
+       !Number.isFinite(start)||!Number.isFinite(end)||end<=start){
+      this._modeHistory=[];
+      this._modeHistoryLoading=false;
+      this._render();
+      return;
+    }
+    try{
+      const result=await this._hass.callWS({
+        type:"history/history_during_period",
+        start_time:new Date(start).toISOString(),
+        end_time:new Date(end).toISOString(),
+        entity_ids:["sensor.home_presence"],
+        include_start_time_state:true,
+        significant_changes_only:true,
+        minimal_response:true,
+        no_attributes:true
+      });
+      if(request!==this._modeRequest||!this.isConnected||key!==this._modeHistoryKey)return;
+      const rows=result?.["sensor.home_presence"];
+      this._modeHistory=Array.isArray(rows)?rows:[];
+    }catch(error){
+      if(request!==this._modeRequest||!this.isConnected)return;
+      this._modeHistory=[];
+      this._modeHistoryError="Recorder mode history unavailable: "+
+        (error?.message||String(error));
+    }finally{
+      if(request===this._modeRequest&&this.isConnected){
+        this._modeHistoryLoading=false;
+        this._render();
+      }
     }
   }
   _mobileMenuButton(){
@@ -183,6 +254,77 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     card.append(E("div",title,"muted"));
     card.append(E("div",value,"stat"));
     if(detail)card.append(E("div",detail,"muted small"));
+    return card;
+  }
+  _modeChart(){
+    const card=this._card("Home Presence · mode over time",12);
+    const start=Date.parse(this._range.start);
+    const end=Math.min(Date.parse(this._range.end),Date.now());
+    if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start){
+      card.append(E("div","No past dates in the selected period.","empty"));
+      return card;
+    }
+    if(!this._hass?.states?.["sensor.home_presence"]){
+      card.append(E("div","sensor.home_presence is not available.","empty"));
+      return card;
+    }
+    const key=this._range.start+"|"+this._range.end;
+    const rows=this._modeHistoryKey===key?this._modeHistory:[];
+    const changes=[];
+    for(const item of rows.map(row=>({
+      at:modeEpoch(row),state:modeState(row.s??row.state)
+    })).filter(item=>Number.isFinite(item.at)&&item.at<=end)
+      .sort((a,b)=>a.at-b.at)){
+      if(!changes.length||changes[changes.length-1].state!==item.state)
+        changes.push(item);
+    }
+    const segments=[];
+    for(let i=0;i<changes.length;i++){
+      const from=Math.max(start,changes[i].at);
+      const to=Math.min(end,changes[i+1]?.at??end);
+      if(to>from)segments.push({start:from,end:to,state:changes[i].state});
+    }
+    const track=E("div",null,"mode-track");
+    track.setAttribute("role","img");
+    track.setAttribute("aria-label","Household Home, Away and Unknown modes over the selected period");
+    if(!segments.length){
+      track.append(E("span",this._modeHistoryLoading?"Loading mode history…":
+        "No recorded states in this period","mode-empty"));
+    }
+    for(const segment of segments){
+      const piece=E("div",null,"mode-segment");
+      const fraction=(segment.end-segment.start)/(end-start);
+      piece.style.left=((segment.start-start)/(end-start)*100)+"%";
+      piece.style.width=(fraction*100)+"%";
+      piece.style.background=MODE_COLORS[segment.state];
+      piece.title=modeLabel(segment.state)+" · "+
+        new Date(segment.start).toLocaleString()+" – "+
+        new Date(segment.end).toLocaleString();
+      if(fraction>0.13)piece.append(E("span",modeLabel(segment.state)));
+      track.append(piece);
+    }
+    card.append(track);
+    const axis=E("div",null,"chartlabels");
+    axis.append(E("span",new Date(start).toLocaleString()),
+      E("span",new Date(end).toLocaleString()));
+    card.append(axis);
+    const legend=E("div",null,"mode-legend");
+    for(const [name,label] of [["home","Home"],["away","Away"],
+      ["unknown","Unknown / Unavailable"]]){
+      const item=E("span",null,"mode-legend-item");
+      const swatch=E("i",null,"mode-swatch");
+      swatch.style.background=MODE_COLORS[name];
+      item.append(swatch,E("span",label));
+      legend.append(item);
+    }
+    card.append(legend);
+    if(this._modeHistoryLoading&&segments.length)
+      card.append(E("p","Refreshing Recorder mode history…","muted small"));
+    if(this._modeHistoryError)card.append(E("p",this._modeHistoryError,"error"));
+    card.append(E("p",
+      "Based on Home Assistant Recorder, as in the Tado dashboard. Gaps mean no recorded state; "+
+      "history before the sensor existed is not invented. This timeline is read-only.",
+      "muted small"));
     return card;
   }
   _chart(events,matcher){
@@ -320,6 +462,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     grid.append(this._stat("Household presence",status,"home / away / unknown"));
     grid.append(this._stat("Tracked people",people.length,"Person location entities"));
     grid.append(this._stat("Positive Home sources",evidence.length,"Trusted labeled signals currently confirming Home"));
+    grid.append(this._modeChart());
     const sources=this._card("Current evidence",12);
     const homeTimes=data.source_last_home||{};
     sources.append(E("h3","People / Companion App GPS"));
@@ -348,7 +491,6 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       "Last update is the latest timestamp Home Assistant reports for the tracker (not a guarantee of fresh GPS or Wi-Fi). Last seen Home is the most recent positive Home observation retained by this integration, including after departure and Home Assistant restarts. A dash means no known observation yet. No GPS coordinates are copied into this diagnostic cache.",
       "muted small"));
     grid.append(sources);
-    grid.append(this._chart(records,e=>e.kind==="presence_state"));
     grid.append(this._events(records.slice().reverse(),"Home Presence · state changes and source diagnostics"));
   }
   _devices(grid,data){
@@ -489,6 +631,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     tabs.setAttribute("role","tablist");
     tabs.append(this._btn("Home Presence",this._tab==="presence",()=>{
       this._tab="presence";this._search="";this._render();
+      this._loadModeHistory();
     },"tab"));
     tabs.append(this._btn("Device availability",this._tab==="devices",()=>{
       this._tab="devices";this._search="";this._render();

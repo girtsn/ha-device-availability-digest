@@ -1,5 +1,15 @@
 # Device Availability Digest
 
+**v0.3.12 Home Presence mode timeline:** The Home Presence tab now displays
+a categorical Home / Away / Unknown timeline directly below the current-status
+tiles, using Home Assistant Recorder history (the same approach as the Tado X
+Heating overview). It replaces the previous presence event-count histogram
+without removing source diagnostics or incident history. The shared calendar
+controls the selected period; gaps are left blank when Recorder has no data
+rather than inferring a mode. The Device Availability and Stale Sensors charts
+are unchanged. History availability depends on Recorder retention and inclusion
+of `sensor.home_presence`.
+
 **v0.3.11 self-contained PM2.5 detection:** Each physical PM2.5 sensor is monitored **independently** for a prolonged (about 48h) run of near-zero 0–2 µg/m³ readings. Minor 0↔1↔2 fluctuations do not hide the potential failure mode, and no other sensor is referenced. This is advisory **SUSPECT**, never a confirmed offline state.
 
 **v0.3.9 monitoring cleanup:** Current OFFLINE/PENDING records and queued alerts are automatically reconciled against the live HA entity/device registry after startup, on registry changes and during the 30-second monitoring tick. Deleted, disabled, excluded, removed and no-longer-representative entities are retired without false recovery emails; historical events remain available. UniFi `*_link_speed` readings and ordinary diagnostic entities are not used as availability proxies (explicit real connectivity sensors remain eligible).
@@ -7,7 +17,7 @@
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.11 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.12 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -34,7 +44,7 @@ household presence and local network identifiers.
 
 The dashboard has three tabs:
 
-- **Home Presence:** current `home / away / unknown` state, **all** tracked
+- **Home Presence:** current `home / away / unknown` state, a Recorder-backed **mode timeline** near the top, **all** tracked
   `person.*` GPS sources and all entity-level **Home Presence**-labeled
   Wi-Fi/occupancy sources, including currently `not_home` or `unavailable`
   devices. Each source shows its current state, **Last update** and
