@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from math import isfinite
+from statistics import median
 
 AIR = frozenset({
     "pm1", "pm10", "pm25", "carbon_dioxide", "carbon_monoxide",
@@ -32,6 +33,42 @@ def group_for(entity_id: str, device_class: str) -> str:
         return "electrical"
     return "other"
 
+
+
+def is_pm25(entity_id: str, device_class: str) -> bool:
+    """Recognise PM2.5 measurements without matching unrelated numeric sensors."""
+    eid = entity_id.lower()
+    return (device_class or "").lower() == "pm25" or any(
+        marker in eid for marker in ("pm2_5", "pm2.5", "pm25")
+    )
+
+
+def low_variation_pm25(
+    own_samples: list[tuple[datetime, float]],
+    peer_windows: list[list[tuple[datetime, float]]],
+) -> bool:
+    """Heuristic: persistently near-zero PM2.5 despite a varying higher peer.
+
+    Sample tuples must already be limited to the last 24 hours. This is only
+    SUSPECT, not evidence of a device/network outage. A quiet room can really
+    have very low particulate levels, so a responsive peer is required.
+    """
+    def values(window: list[tuple[datetime, float]]) -> list[float] | None:
+        if len(window) < 20:
+            return None
+        if (window[-1][0] - window[0][0]).total_seconds() < 22 * 3600:
+            return None
+        return [value for _, value in window]
+
+    own = values(own_samples)
+    if own is None or min(own) < 0 or max(own) > 2 or max(own) - min(own) > 2:
+        return False
+
+    for peer_samples in peer_windows:
+        peer = values(peer_samples)
+        if peer is not None and median(peer) >= 6 and max(peer) - min(peer) >= 4:
+            return True
+    return False
 
 def timeout_hours(group: str, labels: set[str]) -> int:
     if "stale_monitor_fast" in labels:
