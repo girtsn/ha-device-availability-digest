@@ -7,7 +7,8 @@ are different incidents. No global state_reported event listener is required.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from math import isfinite
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -17,7 +18,10 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .model import is_nonphysical_device
-from .stale_logic import BAD_STATES, classify, eligible_measurement, group_for, timeout_hours
+from .stale_logic import (
+    BAD_STATES, classify, eligible_measurement, group_for, is_pm25,
+    low_variation_pm25, timeout_hours,
+)
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = DOMAIN + "_stale_measurements"
@@ -68,6 +72,7 @@ class StaleSensorMonitor:
         self.lock = asyncio.Lock()
         self.active: dict[str, dict[str, Any]] = {}
         self.bad_since: dict[str, str] = {}
+        self.pm25_samples: dict[str, list[list]] = {}
         self.queue: list[dict[str, Any]] = []
         self.last_digest: str | None = None
         self.checked_at: str | None = None
@@ -78,12 +83,14 @@ class StaleSensorMonitor:
         data = await self.store.async_load() or {}
         self.active = dict(data.get("active") or {})
         self.bad_since = dict(data.get("bad_since") or {})
+        self.pm25_samples = dict(data.get("pm25_samples") or {})
         self.queue = list(data.get("queue") or [])[-1000:]
         self.last_digest = data.get("last_digest")
 
     async def _save(self) -> None:
         await self.store.async_save({
             "active": self.active, "bad_since": self.bad_since,
+            "pm25_samples": self.pm25_samples,
             "queue": self.queue[-1000:], "last_digest": self.last_digest,
         })
 
@@ -118,6 +125,8 @@ class StaleSensorMonitor:
             next_bad: dict[str, str] = {}
             rows: list[dict] = []
             transitions: list[dict] = []
+            tracked_pm25: set[str] = set()
+            live_pm25: dict[str, float] = {}
             for state in self.hass.states.async_all("sensor"):
                 eid = state.entity_id
                 entry = registry.async_get(eid)
@@ -140,6 +149,15 @@ class StaleSensorMonitor:
                             or category in {"diagnostic", "config"} or nonphysical):
                         continue
                 group = group_for(eid, str(attrs.get("device_class") or ""))
+                if is_pm25(eid, str(attrs.get("device_class") or "")):
+                    tracked_pm25.add(eid)
+                    try:
+                        numeric = float(state.state)
+                    except (ValueError, TypeError):
+                        pass
+                    else:
+                        if isfinite(numeric):
+                            live_pm25[eid] = numeric
                 threshold = timeout_hours(group, labels)
                 changed = state.last_changed
                 reported = getattr(state, "last_reported", None) or state.last_updated
@@ -173,6 +191,67 @@ class StaleSensorMonitor:
                 rows.append(row)
                 if status in {"stale", "suspect"}:
                     next_active[eid] = row
+
+            # Keep a short rolling PM2.5 history across restarts. Observe only
+            # selected physical PM2.5 sensors, not any diagnostic entities.
+            # Samples are taken on the existing 15-minute scans, not via a
+            # global state-report listener or Recorder/history queries.
+            cutoff = now - timedelta(hours=24)
+            windows: dict[str, list[tuple[datetime, float]]] = {}
+            samples: dict[str, list[list]] = {}
+            for eid in tracked_pm25:
+                window: list[tuple[datetime, float]] = []
+                for sample in self.pm25_samples.get(eid, []):
+                    if not isinstance(sample, (list, tuple)) or len(sample) != 2:
+                        continue
+                    when = _parse_datetime(sample[0])
+                    if when is None or not cutoff <= when <= now:
+                        continue
+                    try:
+                        number = float(sample[1])
+                    except (TypeError, ValueError):
+                        continue
+                    if isfinite(number):
+                        window.append((when, number))
+                window.sort(key=lambda item: item[0])
+                latest = live_pm25.get(eid)
+                if latest is not None and (
+                    not window or (now - window[-1][0]).total_seconds() >= 600
+                ):
+                    window.append((now, latest))
+                windows[eid] = window
+                samples[eid] = [[_iso(when), number] for when, number in window]
+
+            # Only flag near-zero, low-variation PM2.5 readings if another
+            # monitored, actively reporting PM2.5 sensor shows a clearly
+            # different and changing trend. This is suspect, never offline.
+            fresh_peer_ids = {
+                row["entity_id"] for row in rows
+                if row["entity_id"] in windows and row["status"] == "healthy"
+                and row["age_hours"] <= 6
+            }
+            for row in rows:
+                eid = row["entity_id"]
+                if row["status"] != "healthy" or eid not in fresh_peer_ids:
+                    continue
+                peer_windows = [
+                    windows[other] for other in fresh_peer_ids if other != eid
+                ]
+                if low_variation_pm25(windows[eid], peer_windows):
+                    row["status"] = "suspect"
+                    row["reason"] = "pm25_low_variation_vs_active_peer"
+                    row["age_hours"] = round(
+                        (windows[eid][-1][0] - windows[eid][0][0]).total_seconds() / 3600,
+                        2,
+                    )
+                    row["threshold_hours"] = 24.0
+
+            samples_changed = samples != self.pm25_samples
+            self.pm25_samples = samples
+            next_active = {
+                row["entity_id"]: row for row in rows
+                if row["status"] in {"stale", "suspect"}
+            }
 
             for eid, row in next_active.items():
                 if eid not in old_active:
@@ -214,7 +293,7 @@ class StaleSensorMonitor:
                         )
             # Persist any transition or bad-state timer change, not hourly
             # age changes; measurements are rebuilt from live HA states.
-            if transitions or next_bad != previous_bad:
+            if transitions or next_bad != previous_bad or samples_changed:
                 await self._save()
             if send_digest:
                 await self._digest(now)
@@ -246,7 +325,7 @@ class StaleSensorMonitor:
             "Stale numeric measurement digest (changes since previous email)",
             "Checked: " + dt_util.as_local(now).strftime("%Y-%m-%d %H:%M:%S %Z"),
             f"Monitored: {len(self.rows)} | Stale: {len([r for r in self.rows if r['status'] == 'stale'])}"
-            f" | Suspected frozen: {len([r for r in self.rows if r['status'] == 'suspect'])}",
+            f" | Suspected frozen/low-variation: {len([r for r in self.rows if r['status'] == 'suspect'])}",
             "",
             "EVENTS (chronological):",
         ]
@@ -266,7 +345,7 @@ class StaleSensorMonitor:
                     f"({row['reason']}; {row['age_hours']}h of {row['threshold_hours']}h)"
                 )
         lines.extend(["", "Unavailable and unknown states use a dwell period.",
-                      "Unchanged-value findings are heuristic and require an opt-in label.",
+                      "Suspected frozen values need an opt-in label; near-zero PM2.5 peer anomalies are automatic heuristics.",
                       "Review the Stale sensors tab in the Availability dashboard."])
         if await self.send(title, "\n".join(lines)):
             # A failed delivery retains the event queue until the next slot.
