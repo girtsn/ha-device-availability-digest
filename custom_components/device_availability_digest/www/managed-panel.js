@@ -383,7 +383,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       return;
     }
     grid.append(this._stat("Stale reports",counts.stale||0,"No fresh state report, unknown or unavailable beyond threshold"));
-    grid.append(this._stat("Suspected frozen",counts.suspect||0,"Only sensors explicitly labeled stale_monitor_watch_value"));
+    grid.append(this._stat("Suspect measurements",counts.suspect||0,"Opt-in unchanged values or automatic near-zero PM2.5 anomalies versus responsive peers"));
     grid.append(this._stat("Sensors monitored",counts.monitored||0,
       (counts.healthy||0)+" healthy · "+(counts.pending||0)+" pending"));
     const info=this._card("Monitoring status",12);
@@ -401,7 +401,8 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     info.append(E("p",
       "Configure entity-level labels: stale_monitor_include, stale_monitor_ignore, "+
       "stale_monitor_fast (3h), stale_monitor_slow (168h), "+
-      "stale_monitor_watch_value (heuristic). Defaults: air 12h, ambient 48h, "+
+      "stale_monitor_watch_value (unchanged-value heuristic). Near-zero PM2.5 versus "+
+       "a changing peer is checked automatically after ~24h. Defaults: air 12h, ambient 48h, "+
       "electrical 72h, other 168h. Daily emails contain changes only.",
       "muted small"));
     grid.append(info);

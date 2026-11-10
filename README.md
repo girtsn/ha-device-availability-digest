@@ -1,11 +1,13 @@
 # Device Availability Digest
 
+**v0.3.10 PM2.5 anomaly detection:** The stale-sensor monitor also flags sustained near-zero PM2.5 readings as *SUSPECT* when another actively changing PM2.5 sensor shows substantially higher values. Minor 0↔1↔2 fluctuations no longer hide this possible failure mode; confirmed offline/stale-report statuses are unchanged.
+
 **v0.3.9 monitoring cleanup:** Current OFFLINE/PENDING records and queued alerts are automatically reconciled against the live HA entity/device registry after startup, on registry changes and during the 30-second monitoring tick. Deleted, disabled, excluded, removed and no-longer-representative entities are retired without false recovery emails; historical events remain available. UniFi `*_link_speed` readings and ordinary diagnostic entities are not used as availability proxies (explicit real connectivity sensors remain eligible).
 
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.8 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.10 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -41,7 +43,7 @@ The dashboard has three tabs:
   occupancy, while timestamps help identify stale trackers. The event log
   preserves source changes and MAC/IP/SSID **only when HA provides them**;
   latitude/longitude are never copied into the diagnostic history.
-- **Stale sensors:** current report-age coverage of numeric measurements, including monitored healthy readings, pending unknown/unavailable readings, confirmed missing reports and opt-in suspected frozen values. Search by entity/room and inspect the last report time, unchanged-value time, rule threshold and reason. Includes a 90-day transition and email history.
+- **Stale sensors:** current report-age coverage of numeric measurements, including monitored healthy readings, pending unknown/unavailable readings, confirmed missing reports, opt-in suspected frozen values and automatic near-zero PM2.5 peer anomalies. Search by entity/room and inspect the last report time, unchanged-value time, rule threshold and reason. Includes a 90-day transition and email history.
 - **Device availability:** current confirmed outages and pending
   disconnections, searchable history of pending, short recoveries (no email),
   confirmed OFFLINE and RECOVERED incidents, plus successful immediate-email
@@ -81,7 +83,7 @@ sidebar panel is removed too; disabling it does not erase the separately
 persisted diagnostic history.
 
 
-## Stale sensor measurements (v0.3.8)
+## Stale sensor measurements (v0.3.10)
 
 The integration now includes a **separate** restart-safe monitor of physical numeric
 measurement sensors. It scans **every 15 minutes** and sends **Girts-only** alerts
@@ -111,6 +113,22 @@ or units can stay eligible during an unknown/unavailable state.
   an unchanged value has exceeded its reporting threshold even though HA is
   still receiving reports; this is a heuristic, not proof of failed hardware
 
+**Automatic PM2.5 low-variation heuristic (v0.3.10):** On the same 15-minute
+scan, the integration retains a rolling 24-hour window of selected physical
+PM2.5 sensors in its private restart-safe Store. If one sensor stays at
+**0–2 µg/m³** for virtually the entire day, while at least one other
+actively reporting PM2.5 sensor has **median ≥6 µg/m³** and varies by
+**≥4 µg/m³** across its own 24-hour window, the low sensor is flagged
+**SUSPECT / pm25_low_variation_vs_active_peer**. Each qualifying window
+must contain at least 20 observations spanning 22 hours. This is
+**not a confirmed stale report or an offline device**, and a truly filtered
+room could legitimately differ from others. It is an attention-worthy
+comparison, not an air-quality calibration. The usual
+`stale_monitor_ignore` label suppresses monitoring when such low readings
+are expected. Historical Recorder samples are not imported, so this rule
+needs about a day of observations after first installation; windows persist
+across Home Assistant restarts.
+
 Default missing-report thresholds: **12 hours for air-quality, 48 for ambient,
 72 for electrical and 168 for other measurements**. For unknown/unavailable
 states the grace period is the smaller of the configured threshold and
@@ -119,7 +137,7 @@ previous automation. They can be overridden per entity with labels.
 
 The dashboard's **Stale sensors** tab shows all monitored entity IDs, latest
 value, time since the latest HA report, last change time, reason for flagging,
-threshold and any pending or suspected-frozen status. A button switches between
+threshold and any pending or suspected status. A button switches between
 flagged/pending readings and **All monitored**, so coverage can be audited.
 
 **Important limitation:** `last_reported` is refreshed when an integration
@@ -127,9 +145,9 @@ writes an entity's state; Home Assistant does not independently poll every
 physical sensor. Some integrations report only *changed* readings, meaning
 an unchanged numeric value may be falsely marked as missing. On the other
 hand, a sensor constantly reporting a frozen zero looks healthy on reporting
-age alone. Use `stale_monitor_watch_value` selectively (e.g. on a particular
-PM2.5 sensor) after verifying its usual behaviour and interpreting the
-“SUSPECT” status rather than a confirmed hardware fault.
+age alone. Use `stale_monitor_watch_value` selectively for exact frozen
+values. Near-zero PM2.5 readings with a responsive peer are also checked
+automatically; both findings are **SUSPECT**, not confirmed hardware faults.
 
 The monitor uses a separate private HA Store, keyed by full entity IDs, so
 it needs **no Text helpers, hash truncation or 56-sensor cap**. Existing
