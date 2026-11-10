@@ -87,26 +87,33 @@ class StaleLogicTests(unittest.TestCase):
         self.assertEqual(assessment(reported=48)[0], "stale")
         self.assertEqual(assessment(reported=47.9)[0], "healthy")
 
-    def test_near_zero_pm25_with_changing_active_peer_is_suspect(self):
+    def test_near_zero_pm25_only_own_history_is_suspect(self):
         self.assertTrue(is_pm25("sensor.kitchen_pm2_5", ""))
         self.assertTrue(is_pm25("sensor.kitchen", "pm25"))
         self.assertFalse(is_pm25("sensor.kitchen_temperature", "temperature"))
-        start = NOW - timedelta(hours=24)
-        own = [(start + timedelta(minutes=15 * i), float(i % 3))
-               for i in range(97)]
-        # Gradually changing higher PM2.5 in the adjacent room.
-        peer = [(start + timedelta(minutes=15 * i), float(6 + i % 14))
-                for i in range(97)]
-        self.assertTrue(low_variation_pm25(own, [peer]))
-        # No peer, an equally low peer, or a motionless peer must not prove
-        # that a room's clean reading is implausible.
-        self.assertFalse(low_variation_pm25(own, []))
-        self.assertFalse(low_variation_pm25(own, [own]))
-        self.assertFalse(low_variation_pm25(own, [[(t, 9) for t, _ in peer]]))
-        self.assertFalse(low_variation_pm25(own[-12:], [peer]))
-        # Genuine PM2.5 variation is not a flatline.
+        start = NOW - timedelta(hours=48)
+        own = [
+            (start + timedelta(minutes=15 * i), float(i % 3))
+            for i in range(193)
+        ]
+        # No other sensor data is needed, even though the value changes.
+        self.assertTrue(low_variation_pm25(own))
+        # A fresh or too-sparse history cannot establish persistence.
+        self.assertFalse(low_variation_pm25(own[-50:]))
+        self.assertFalse(low_variation_pm25(own[::4]))
+        # A legitimately changing PM2.5 signal should not be flagged.
         varied = [(t, float(2 + i % 7)) for i, (t, _) in enumerate(own)]
-        self.assertFalse(low_variation_pm25(varied, [peer]))
+        self.assertFalse(low_variation_pm25(varied))
+        # A single reading outside the narrow range should break the run.
+        spikes = list(own)
+        spikes[len(spikes) // 2] = (spikes[len(spikes) // 2][0], 8.0)
+        self.assertFalse(low_variation_pm25(spikes))
+        # Non-finite and negative readings must not indicate a flatline.
+        invalid = list(own)
+        invalid[-2] = (invalid[-2][0], float("nan"))
+        self.assertFalse(low_variation_pm25(invalid))
+        invalid[-2] = (invalid[-2][0], -1.0)
+        self.assertFalse(low_variation_pm25(invalid))
 
     def test_unknown_and_unavailable_have_independent_grace(self):
         self.assertEqual(assessment(value="unknown", reported=100, changed=10)[0], "pending")
