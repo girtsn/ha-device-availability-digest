@@ -19,8 +19,8 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .model import is_nonphysical_device
 from .stale_logic import (
-    BAD_STATES, classify, eligible_measurement, group_for, is_pm25,
-    low_variation_pm25, timeout_hours,
+    BAD_STATES, PM25_LOW_VARIATION_HOURS, classify, eligible_measurement,
+    group_for, is_pm25, low_variation_pm25, timeout_hours,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -196,7 +196,7 @@ class StaleSensorMonitor:
             # selected physical PM2.5 sensors, not any diagnostic entities.
             # Samples are taken on the existing 15-minute scans, not via a
             # global state-report listener or Recorder/history queries.
-            cutoff = now - timedelta(hours=24)
+            cutoff = now - timedelta(hours=PM25_LOW_VARIATION_HOURS)
             windows: dict[str, list[tuple[datetime, float]]] = {}
             samples: dict[str, list[list]] = {}
             for eid in tracked_pm25:
@@ -222,29 +222,23 @@ class StaleSensorMonitor:
                 windows[eid] = window
                 samples[eid] = [[_iso(when), number] for when, number in window]
 
-            # Only flag near-zero, low-variation PM2.5 readings if another
-            # monitored, actively reporting PM2.5 sensor shows a clearly
-            # different and changing trend. This is suspect, never offline.
-            fresh_peer_ids = {
-                row["entity_id"] for row in rows
-                if row["entity_id"] in windows and row["status"] == "healthy"
-                and row["age_hours"] <= 6
-            }
+            # Detect a sensor's own nearly motionless 0–2 µg/m³ PM2.5
+            # history. No peer or other sensor is ever consulted. Even when
+            # readings vary slightly, 48h of near-zero values can be suspect.
+            # A fresh HA report is required; no-report is checked separately.
             for row in rows:
                 eid = row["entity_id"]
-                if row["status"] != "healthy" or eid not in fresh_peer_ids:
+                if (row["status"] != "healthy" or eid not in windows
+                        or row["age_hours"] > 1):
                     continue
-                peer_windows = [
-                    windows[other] for other in fresh_peer_ids if other != eid
-                ]
-                if low_variation_pm25(windows[eid], peer_windows):
+                if low_variation_pm25(windows[eid]):
                     row["status"] = "suspect"
-                    row["reason"] = "pm25_low_variation_vs_active_peer"
+                    row["reason"] = "pm25_low_variation_self"
                     row["age_hours"] = round(
                         (windows[eid][-1][0] - windows[eid][0][0]).total_seconds() / 3600,
                         2,
                     )
-                    row["threshold_hours"] = 24.0
+                    row["threshold_hours"] = float(PM25_LOW_VARIATION_HOURS)
 
             samples_changed = samples != self.pm25_samples
             self.pm25_samples = samples
@@ -345,7 +339,7 @@ class StaleSensorMonitor:
                     f"({row['reason']}; {row['age_hours']}h of {row['threshold_hours']}h)"
                 )
         lines.extend(["", "Unavailable and unknown states use a dwell period.",
-                      "Suspected frozen values need an opt-in label; near-zero PM2.5 peer anomalies are automatic heuristics.",
+                      "Exact frozen values need an opt-in label; persistent near-zero PM2.5 is an automatic self-only heuristic.",
                       "Review the Stale sensors tab in the Availability dashboard."])
         if await self.send(title, "\n".join(lines)):
             # A failed delivery retains the event queue until the next slot.
