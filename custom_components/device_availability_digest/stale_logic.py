@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from math import isfinite
-from statistics import median
 
 AIR = frozenset({
     "pm1", "pm10", "pm25", "carbon_dioxide", "carbon_monoxide",
@@ -19,6 +18,8 @@ EXCLUDED_ID_PARTS = (
     "upload_speed", "memory_usage", "cpu_usage",
 )
 BAD_STATES = frozenset({"unknown", "unavailable", ""})
+PM25_LOW_VARIATION_HOURS = 48
+PM25_MIN_SAMPLES = 96
 
 
 def group_for(entity_id: str, device_class: str) -> str:
@@ -45,30 +46,21 @@ def is_pm25(entity_id: str, device_class: str) -> bool:
 
 def low_variation_pm25(
     own_samples: list[tuple[datetime, float]],
-    peer_windows: list[list[tuple[datetime, float]]],
 ) -> bool:
-    """Heuristic: persistently near-zero PM2.5 despite a varying higher peer.
+    """Flag a near-zero PM2.5 measurement that barely varies for ~2 days.
 
-    Sample tuples must already be limited to the last 24 hours. This is only
-    SUSPECT, not evidence of a device/network outage. A quiet room can really
-    have very low particulate levels, so a responsive peer is required.
+    This is evaluated solely from the sensor's own observations, never from
+    other rooms, devices or peer measurements. Samples are produced by
+    15-minute scans and retained for 48 hours across HA restarts. Require
+    enough coverage so short-lived clean-air readings are not flagged.
+    A prolonged genuinely low reading is possible, hence SUSPECT, not STALE.
     """
-    def values(window: list[tuple[datetime, float]]) -> list[float] | None:
-        if len(window) < 20:
-            return None
-        if (window[-1][0] - window[0][0]).total_seconds() < 22 * 3600:
-            return None
-        return [value for _, value in window]
-
-    own = values(own_samples)
-    if own is None or min(own) < 0 or max(own) > 2 or max(own) - min(own) > 2:
+    if len(own_samples) < PM25_MIN_SAMPLES:
         return False
+    if (own_samples[-1][0] - own_samples[0][0]).total_seconds() < 46 * 3600:
+        return False
+    return all(isfinite(value) and 0 <= value <= 2 for _, value in own_samples)
 
-    for peer_samples in peer_windows:
-        peer = values(peer_samples)
-        if peer is not None and median(peer) >= 6 and max(peer) - min(peer) >= 4:
-            return True
-    return False
 
 def timeout_hours(group: str, labels: set[str]) -> int:
     if "stale_monitor_fast" in labels:
