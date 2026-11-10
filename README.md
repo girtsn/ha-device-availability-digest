@@ -1,13 +1,13 @@
 # Device Availability Digest
 
-**v0.3.10 PM2.5 anomaly detection:** The stale-sensor monitor also flags sustained near-zero PM2.5 readings as *SUSPECT* when another actively changing PM2.5 sensor shows substantially higher values. Minor 0↔1↔2 fluctuations no longer hide this possible failure mode; confirmed offline/stale-report statuses are unchanged.
+**v0.3.11 self-contained PM2.5 detection:** Each physical PM2.5 sensor is monitored **independently** for a prolonged (about 48h) run of near-zero 0–2 µg/m³ readings. Minor 0↔1↔2 fluctuations do not hide the potential failure mode, and no other sensor is referenced. This is advisory **SUSPECT**, never a confirmed offline state.
 
 **v0.3.9 monitoring cleanup:** Current OFFLINE/PENDING records and queued alerts are automatically reconciled against the live HA entity/device registry after startup, on registry changes and during the 30-second monitoring tick. Deleted, disabled, excluded, removed and no-longer-representative entities are retired without false recovery emails; historical events remain available. UniFi `*_link_speed` readings and ordinary diagnostic entities are not used as availability proxies (explicit real connectivity sensors remain eligible).
 
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.10 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.11 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -43,7 +43,7 @@ The dashboard has three tabs:
   occupancy, while timestamps help identify stale trackers. The event log
   preserves source changes and MAC/IP/SSID **only when HA provides them**;
   latitude/longitude are never copied into the diagnostic history.
-- **Stale sensors:** current report-age coverage of numeric measurements, including monitored healthy readings, pending unknown/unavailable readings, confirmed missing reports, opt-in suspected frozen values and automatic near-zero PM2.5 peer anomalies. Search by entity/room and inspect the last report time, unchanged-value time, rule threshold and reason. Includes a 90-day transition and email history.
+- **Stale sensors:** current report-age coverage of numeric measurements, including monitored healthy readings, pending unknown/unavailable readings, confirmed missing reports, opt-in suspected frozen values and automatic self-only near-zero PM2.5 anomalies. Search by entity/room and inspect the last report time, unchanged-value time, rule threshold and reason. Includes a 90-day transition and email history.
 - **Device availability:** current confirmed outages and pending
   disconnections, searchable history of pending, short recoveries (no email),
   confirmed OFFLINE and RECOVERED incidents, plus successful immediate-email
@@ -83,7 +83,7 @@ sidebar panel is removed too; disabling it does not erase the separately
 persisted diagnostic history.
 
 
-## Stale sensor measurements (v0.3.10)
+## Stale sensor measurements (v0.3.11)
 
 The integration now includes a **separate** restart-safe monitor of physical numeric
 measurement sensors. It scans **every 15 minutes** and sends **Girts-only** alerts
@@ -113,21 +113,25 @@ or units can stay eligible during an unknown/unavailable state.
   an unchanged value has exceeded its reporting threshold even though HA is
   still receiving reports; this is a heuristic, not proof of failed hardware
 
-**Automatic PM2.5 low-variation heuristic (v0.3.10):** On the same 15-minute
-scan, the integration retains a rolling 24-hour window of selected physical
-PM2.5 sensors in its private restart-safe Store. If one sensor stays at
-**0–2 µg/m³** for virtually the entire day, while at least one other
-actively reporting PM2.5 sensor has **median ≥6 µg/m³** and varies by
-**≥4 µg/m³** across its own 24-hour window, the low sensor is flagged
-**SUSPECT / pm25_low_variation_vs_active_peer**. Each qualifying window
-must contain at least 20 observations spanning 22 hours. This is
-**not a confirmed stale report or an offline device**, and a truly filtered
-room could legitimately differ from others. It is an attention-worthy
-comparison, not an air-quality calibration. The usual
-`stale_monitor_ignore` label suppresses monitoring when such low readings
-are expected. Historical Recorder samples are not imported, so this rule
-needs about a day of observations after first installation; windows persist
-across Home Assistant restarts.
+**Automatic PM2.5 low-variation heuristic (v0.3.11):** On the same
+15-minute scan, the integration retains a rolling **48-hour window** of
+each eligible physical PM2.5 sensor in its private restart-safe Store.
+**Every sensor is evaluated only against its own readings**, with no
+comparisons to other rooms/devices, peer baselines or outside sensors.
+If its readings have continuously stayed at **0–2 µg/m³** over at least
+46 hours, with 96 or more observations and a fresh Home Assistant report
+within the preceding hour, it is flagged
+**SUSPECT / pm25_low_variation_self**. Values moving 0→1→2
+do not reset the suspicion. A reading outside that interval breaks
+the observed run, and a genuine no-report condition remains a separate
+STALE diagnosis. A genuinely low-PM room can trigger this heuristic, so
+SUSPECT is not confirmation of defective hardware. Use
+`stale_monitor_ignore` to exclude sensors whose persistently low readings
+are expected.
+
+No Recorder history is imported. The 48-hour window survives Home Assistant
+restarts, including existing v0.3.10 samples, but a new installation needs
+roughly two days of monitoring before the rule can flag a sensor.
 
 Default missing-report thresholds: **12 hours for air-quality, 48 for ambient,
 72 for electrical and 168 for other measurements**. For unknown/unavailable
@@ -146,8 +150,9 @@ physical sensor. Some integrations report only *changed* readings, meaning
 an unchanged numeric value may be falsely marked as missing. On the other
 hand, a sensor constantly reporting a frozen zero looks healthy on reporting
 age alone. Use `stale_monitor_watch_value` selectively for exact frozen
-values. Near-zero PM2.5 readings with a responsive peer are also checked
-automatically; both findings are **SUSPECT**, not confirmed hardware faults.
+values. Persistent near-zero PM2.5 readings are also checked from the
+sensor's own observations, without any peer comparison. Both findings are
+**SUSPECT**, not confirmed hardware faults.
 
 The monitor uses a separate private HA Store, keyed by full entity IDs, so
 it needs **no Text helpers, hash truncation or 56-sensor cap**. Existing
