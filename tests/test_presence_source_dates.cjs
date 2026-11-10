@@ -92,4 +92,21 @@ assert.match(full,/Last seen Home/);
 assert.match(full,/Last GPS tracker update/);
 assert.doesNotMatch(full,/Only Companion App.*establishes Away/,
   "Old incorrect Away rule must not remain in dashboard");
-console.log("Home Presence last-update/last-Home and offline Wi-Fi source tests passed");
+// The summary and the mode-history timeline must share their exact palette.
+const statusCard=grid.children[0];
+assert.equal(statusCard.children[1].textContent,"Unknown");
+assert.equal(statusCard.children[1].style.color,"#949ba4");
+for(const [state,label,color] of [
+  ["home","Home","#218657"],
+  ["away","Away","#d38221"],
+  ["unavailable","Unavailable","#949ba4"]
+]){
+  panel._hass.states["sensor.home_presence"].state=state;
+  const stateGrid=new Element("main");
+  panel._presence(stateGrid,{presence:state,events:[],source_last_home:{}});
+  assert.equal(stateGrid.children[0].children[1].textContent,label);
+  assert.equal(stateGrid.children[0].children[1].style.color,color);
+}
+assert.equal(panel._stat("Tracked people",2,"People").children[1].style.color,
+  undefined,"Only the presence-state summary should have mode coloring");
+console.log("Home Presence source dates and shared status/timeline colors verified");

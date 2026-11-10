@@ -249,10 +249,12 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   _badge(value){
     return E("span",String(value??"unknown"),"badge "+statusClass(value));
   }
-  _stat(title,value,detail){
+  _stat(title,value,detail,presenceMode=null){
     const card=this._card(null,4);
     card.append(E("div",title,"muted"));
-    card.append(E("div",value,"stat"));
+    const stat=E("div",value,"stat");
+    if(presenceMode!==null)stat.style.color=MODE_COLORS[modeState(presenceMode)];
+    card.append(stat);
     if(detail)card.append(E("div",detail,"muted small"));
     return card;
   }
@@ -459,7 +461,9 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     const records=(data.events||[]).filter(x=>x.kind?.startsWith("presence_"));
     const people=current?.attributes?.tracked_people||[];
     const evidence=current?.attributes?.active_home_evidence||[];
-    grid.append(this._stat("Household presence",status,"home / away / unknown"));
+    const currentMode=modeState(status);
+    grid.append(this._stat("Household presence",modeLabel(currentMode),
+      "home / away / unknown",currentMode));
     grid.append(this._stat("Tracked people",people.length,"Person location entities"));
     grid.append(this._stat("Positive Home sources",evidence.length,"Trusted labeled signals currently confirming Home"));
     grid.append(this._modeChart());
