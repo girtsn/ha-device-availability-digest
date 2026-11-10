@@ -5,7 +5,10 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "device_availability_digest"))
-from stale_logic import classify, eligible_measurement, group_for, timeout_hours
+from stale_logic import (
+    classify, eligible_measurement, group_for, is_pm25,
+    low_variation_pm25, timeout_hours,
+)
 
 NOW = datetime(2026, 11, 9, 20, 0, tzinfo=timezone.utc)
 
@@ -83,6 +86,27 @@ class StaleLogicTests(unittest.TestCase):
         self.assertEqual(assessment(reported=49)[0:2], ("stale", "no_report"))
         self.assertEqual(assessment(reported=48)[0], "stale")
         self.assertEqual(assessment(reported=47.9)[0], "healthy")
+
+    def test_near_zero_pm25_with_changing_active_peer_is_suspect(self):
+        self.assertTrue(is_pm25("sensor.kitchen_pm2_5", ""))
+        self.assertTrue(is_pm25("sensor.kitchen", "pm25"))
+        self.assertFalse(is_pm25("sensor.kitchen_temperature", "temperature"))
+        start = NOW - timedelta(hours=24)
+        own = [(start + timedelta(minutes=15 * i), float(i % 3))
+               for i in range(97)]
+        # Gradually changing higher PM2.5 in the adjacent room.
+        peer = [(start + timedelta(minutes=15 * i), float(6 + i % 14))
+                for i in range(97)]
+        self.assertTrue(low_variation_pm25(own, [peer]))
+        # No peer, an equally low peer, or a motionless peer must not prove
+        # that a room's clean reading is implausible.
+        self.assertFalse(low_variation_pm25(own, []))
+        self.assertFalse(low_variation_pm25(own, [own]))
+        self.assertFalse(low_variation_pm25(own, [[(t, 9) for t, _ in peer]]))
+        self.assertFalse(low_variation_pm25(own[-12:], [peer]))
+        # Genuine PM2.5 variation is not a flatline.
+        varied = [(t, float(2 + i % 7)) for i, (t, _) in enumerate(own)]
+        self.assertFalse(low_variation_pm25(varied, [peer]))
 
     def test_unknown_and_unavailable_have_independent_grace(self):
         self.assertEqual(assessment(value="unknown", reported=100, changed=10)[0], "pending")
