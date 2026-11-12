@@ -528,28 +528,38 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       grid.append(this._card("Stale sensor monitoring is disabled in integration Options.",12));
       return;
     }
-    grid.append(this._stat("Stale reports",counts.stale||0,"No fresh state report, unknown or unavailable beyond threshold"));
-    grid.append(this._stat("Suspect measurements",counts.suspect||0,"Opt-in unchanged values or automatic near-zero PM2.5 readings lasting ~48h; each sensor is assessed independently"));
+    grid.append(this._stat("Stale measurements",counts.stale||0,"Missing reports, invalid readings or PM2.5 stuck low for 24 hours"));
+    grid.append(this._stat("Suspect measurements",counts.suspect||0,"Opt-in frozen-value heuristic; PM2.5 stuck-low readings are now STALE"));
     grid.append(this._stat("Sensors monitored",counts.monitored||0,
       (counts.healthy||0)+" healthy · "+(counts.pending||0)+" pending"));
     const info=this._card("Monitoring status",12);
     info.append(E("div",
       "Last scan: "+fmt(monitor.checked_at)+" · Scan interval: 15 minutes · "+
       "Next regular digests: 08:00 and 20:00 (Home Assistant local time) · "+
-      "Queued changes: "+(monitor.queued_events||0)+" · Last email: "+fmt(monitor.last_digest),
+      "Queued changes: "+(monitor.queued_events||0)+
+      " · Last accepted by notify: "+fmt(monitor.last_digest),"small"));
+    info.append(E("div",
+      "Email target: "+(monitor.notification_target||"not configured")+
+      " · Last attempt: "+fmt(monitor.last_attempt)+
+      " · Result: "+(monitor.last_attempt_success==null?"not attempted":
+        monitor.last_attempt_success?"accepted by notify":"FAILED")+
+      " · Daily unresolved reminder: "+(monitor.daily_reminder_enabled?"enabled":"disabled"),
       "small"));
+    if(monitor.last_error)info.append(E("div","Last delivery error: "+monitor.last_error,"muted small"));
     info.append(E("p",
       "Missing reports use last_reported (not last_changed). Some integrations publish only "+
       "when a value changes, so these are missing HA reports, not proof the hardware is faulty. "+
       "A repeated identical value with a fresh report is healthy unless you explicitly enable "+
-      "frozen-value suspicion on that entity. Unknown/unavailable sensors are flagged after a grace period.",
+      "frozen-value suspicion on that entity. Unknown/unavailable sensors are flagged after a grace period. "+
+      "Acceptance by the Home Assistant notify service does not guarantee mailbox delivery.",
       "muted small"));
     info.append(E("p",
       "Configure entity-level labels: stale_monitor_include, stale_monitor_ignore, "+
       "stale_monitor_fast (3h), stale_monitor_slow (168h), "+
-      "stale_monitor_watch_value (unchanged-value heuristic). Persistent near-zero PM2.5 "+
-       "is checked independently per sensor after ~48h, without cross-device comparisons. Defaults: air 12h, ambient 48h, "+
-      "electrical 72h, other 168h. Daily emails contain changes only.",
+      "stale_monitor_watch_value (unchanged-value heuristic). PM2.5 stuck-low detection uses "+
+      "24h of the sensor's own readings, allows occasional 2–5 µg/m³ fluctuations, and requires "+
+      "45 minutes continuously above 5 µg/m³ for recovery. Defaults: air 12h, ambient 48h, "+
+      "electrical 72h, other 168h. Digests at 08:00 and 20:00; optional daily unresolved reminder.",
       "muted small"));
     grid.append(info);
     const card=this._card("Current measurements",12);
@@ -585,6 +595,10 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
         row.age_hours+"h / "+row.threshold_hours+"h","time"));
       details.append(summary,E("div",row.entity_id+" · "+row.reason+
         " · "+row.area+" · "+row.integration,"muted small"),
+        E("div","Last HA report: "+(row.report_age_hours??row.age_hours)+"h ago · "+
+          "Value unchanged: "+(row.unchanged_hours??"—")+"h"+
+          (row.low_variation_hours==null?"":" · PM2.5 observed window: "+row.low_variation_hours+"h"),
+          "muted small"),
         E("pre",JSON.stringify(row,null,2)));
       card.append(details);
     }

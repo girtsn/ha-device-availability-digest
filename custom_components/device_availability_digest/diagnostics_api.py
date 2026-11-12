@@ -89,6 +89,9 @@ def ws_get_history(
                         "counts": {"monitored": 0, "stale": 0, "suspect": 0,
                                    "pending": 0, "healthy": 0},
                         "queued_events": 0, "last_digest": None,
+                        "last_attempt": None, "last_attempt_success": None,
+                        "last_error": None, "last_target": None,
+                        "notification_target": None, "daily_reminder_enabled": False,
                         "checked_at": None}),
         "retention_days": 90,
     })
