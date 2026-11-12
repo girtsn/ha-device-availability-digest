@@ -1,6 +1,6 @@
 # Device Availability Digest
 
-**v0.3.15 eligibility reconciliation:** Previously flagged operational/configuration entities are now retired when the updated policy excludes them, without sending misleading recovery emails. Exclusions also inspect UI display names, not just entity IDs.\n\n**v0.3.14 stale-sensor corrections:** 24-hour stuck-low PM2.5 classification, real event sampling, filtering of configuration values, email delivery diagnostics and daily unresolved reminders.\n\n**v0.3.12 Home Presence mode timeline:** The Home Presence tab now displays
+**v0.3.16 PM2.5 threshold accuracy:** The full configured observation window is now required before a new stuck-low flag. An observation age of 23.89 hours no longer qualifies for a 24-hour threshold; the monitor also retains a pre-window checkpoint to calculate exact coverage.\n\n**v0.3.15 eligibility reconciliation:** Previously flagged operational/configuration entities are now retired when the updated policy excludes them, without sending misleading recovery emails. Exclusions also inspect UI display names, not just entity IDs.\n\n**v0.3.14 stale-sensor corrections:** 24-hour stuck-low PM2.5 classification, real event sampling, filtering of configuration values, email delivery diagnostics and daily unresolved reminders.\n\n**v0.3.12 Home Presence mode timeline:** The Home Presence tab now displays
 a categorical Home / Away / Unknown timeline directly below the current-status
 tiles, using Home Assistant Recorder history (the same approach as the Tado X
 Heating overview). It replaces the previous presence event-count histogram
@@ -17,7 +17,7 @@ of `sensor.home_presence`.
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.15 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.16 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 

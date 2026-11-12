@@ -122,7 +122,9 @@ def pm25_low_variation_details(
         return result
     coverage = (window[-1][0] - window[0][0]).total_seconds()
     result["window_hours"] = round(coverage / 3600, 2)
-    if coverage < (window_hours - 1) * 3600:
+    # The displayed threshold must be the actual minimum observation period.
+    # In particular, 23.89h of data must NOT satisfy a 24h rule.
+    if coverage < window_hours * 3600:
         return result
     low_seconds = mid_seconds = high_seconds = 0.0
     high_run = max_high = 0.0
