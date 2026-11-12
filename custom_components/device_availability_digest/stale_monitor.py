@@ -304,7 +304,7 @@ class StaleSensorMonitor:
             # A fresh HA report is required; no-report is checked separately.
             for row in rows:
                 eid = row["entity_id"]
-                if (row["status"] != "healthy" or eid not in windows
+                if (row["status"] not in {"healthy", "suspect"} or eid not in windows
                         or row["age_hours"] > 1):
                     continue
                 assessment = pm25_low_variation_details(windows[eid], now)
