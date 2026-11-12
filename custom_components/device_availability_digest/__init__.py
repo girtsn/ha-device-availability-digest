@@ -108,6 +108,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             notify_target=lambda: monitor.stale_notify_entity,
             delivery_error=lambda: monitor.last_stale_send_error,
             daily_reminder=options.get("stale_daily_reminder_enabled", True),
+            pm25_window_hours=options.get("pm25_stuck_low_window_hours", 24),
+            pm25_high_threshold=options.get("pm25_recovery_threshold_ugm3", 5.0),
+            pm25_recovery_minutes=options.get("pm25_recovery_minutes", 45),
         )
         await monitor.stale.load()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = monitor

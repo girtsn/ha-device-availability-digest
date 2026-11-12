@@ -530,7 +530,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       grid.append(this._card("Stale sensor monitoring is disabled in integration Options.",12));
       return;
     }
-    grid.append(this._stat("Stale measurements",counts.stale||0,"Missing reports, invalid readings or PM2.5 stuck low for 24 hours"));
+    grid.append(this._stat("Stale measurements",counts.stale||0,"Missing reports, invalid readings or sustained PM2.5 stuck-low behaviour"));
     grid.append(this._stat("Suspect measurements",counts.suspect||0,"Opt-in frozen-value heuristic; PM2.5 stuck-low readings are now STALE"));
     grid.append(this._stat("Sensors monitored",counts.monitored||0,
       (counts.healthy||0)+" healthy · "+(counts.pending||0)+" pending"));
@@ -559,8 +559,10 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       "Configure entity-level labels: stale_monitor_include, stale_monitor_ignore, "+
       "stale_monitor_fast (3h), stale_monitor_slow (168h), "+
       "stale_monitor_watch_value (unchanged-value heuristic). PM2.5 stuck-low detection uses "+
-      "24h of the sensor's own readings, allows occasional 2–5 µg/m³ fluctuations, and requires "+
-      "45 minutes continuously above 5 µg/m³ for recovery. Defaults: air 12h, ambient 48h, "+
+      (monitor.pm25_window_hours||24)+"h of the sensor's own readings, allows occasional values up to "+
+      (monitor.pm25_high_threshold??5)+" µg/m³, and requires "+
+      (monitor.pm25_recovery_minutes||45)+" minutes continuously above "+(monitor.pm25_high_threshold??5)+
+      " µg/m³ for recovery. Defaults: air 12h, ambient 48h, "+
       "electrical 72h, other 168h. Digests at 08:00 and 20:00; optional daily unresolved reminder.",
       "muted small"));
     grid.append(info);

@@ -52,6 +52,9 @@ def is_pm25(entity_id: str, device_class: str) -> bool:
 
 def pm25_low_variation_details(
     own_samples: list[tuple[datetime, float]], now: datetime | None = None,
+    *, window_hours: int = PM25_LOW_VARIATION_HOURS,
+    recovery_threshold: float = 5.0,
+    recovery_minutes: int = PM25_HIGH_RECOVERY_MINUTES,
 ) -> dict:
     """Identify a 24-hour stuck-low signal without treating small spikes as recovery.
 
@@ -73,7 +76,7 @@ def pm25_low_variation_details(
     if not samples:
         return result
     end = now or samples[-1][0]
-    start = end - timedelta(hours=PM25_LOW_VARIATION_HOURS)
+    start = end - timedelta(hours=window_hours)
     # Carry forward the most recent value before the window if available,
     # rather than treating a missing beginning as fresh data.
     earlier = [sample for sample in samples if sample[0] < start]
@@ -81,11 +84,12 @@ def pm25_low_variation_details(
         (when, value) for when, value in samples if start <= when <= end
     ]
     result["sample_count"] = len(window)
-    if len(window) < PM25_MIN_SAMPLES:
+    min_samples = max(12, round(PM25_MIN_SAMPLES * window_hours / PM25_LOW_VARIATION_HOURS))
+    if len(window) < min_samples:
         return result
     coverage = (window[-1][0] - window[0][0]).total_seconds()
     result["window_hours"] = round(coverage / 3600, 2)
-    if coverage < 23 * 3600:
+    if coverage < (window_hours - 1) * 3600:
         return result
     low_seconds = mid_seconds = high_seconds = 0.0
     high_run = max_high = 0.0
@@ -95,11 +99,11 @@ def pm25_low_variation_details(
             return result  # insufficient observation continuity
         if value <= 1 and value >= 0:
             low_seconds += duration
-        elif 1 < value <= 5:
+        elif 1 < value <= recovery_threshold:
             mid_seconds += duration
-        elif value > 5:
+        elif value > recovery_threshold:
             high_seconds += duration
-        if value > 5:
+        if value > recovery_threshold:
             high_run += duration
             max_high = max(max_high, high_run)
         else:
@@ -108,7 +112,7 @@ def pm25_low_variation_details(
     result["low_fraction"] = round(low_seconds / total, 3)
     result["mid_fraction"] = round(mid_seconds / total, 3)
     result["max_high_minutes"] = round(max_high / 60, 2)
-    result["sustained_high"] = max_high >= PM25_HIGH_RECOVERY_MINUTES * 60
+    result["sustained_high"] = max_high >= recovery_minutes * 60
     result["stuck"] = bool(
         result["low_fraction"] >= PM25_MIN_LOW_FRACTION
         and mid_seconds / total <= (1 - PM25_MIN_LOW_FRACTION)

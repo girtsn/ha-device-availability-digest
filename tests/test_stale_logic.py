@@ -117,6 +117,15 @@ class StaleLogicTests(unittest.TestCase):
         self.assertFalse(result["stuck"])
         self.assertTrue(result["sustained_high"])
 
+    def test_configurable_pm25_window_and_recovery(self):
+        start = NOW - timedelta(hours=12)
+        samples = [(start + timedelta(minutes=15 * i), 0.0) for i in range(49)]
+        self.assertTrue(pm25_low_variation_details(samples, window_hours=12)["stuck"])
+        samples[12] = (samples[12][0], 6.0)
+        self.assertTrue(pm25_low_variation_details(samples, window_hours=12,
+                        recovery_threshold=7.0)["stuck"])
+        self.assertFalse(pm25_low_variation_details(samples, window_hours=24)["stuck"])
+
     def test_pm25_coverage_and_sensor_exclusions(self):
         start = NOW - timedelta(hours=24)
         samples = [(start + timedelta(minutes=15 * i), 0.0)

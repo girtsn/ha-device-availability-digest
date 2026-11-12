@@ -66,6 +66,9 @@ class StaleSensorMonitor:
         notify_target: Callable[[], str] | None = None,
         delivery_error: Callable[[], str | None] | None = None,
         daily_reminder: bool = True,
+        pm25_window_hours: int = PM25_LOW_VARIATION_HOURS,
+        pm25_high_threshold: float = 5.0,
+        pm25_recovery_minutes: int = 45,
     ) -> None:
         self.hass = hass
         self.send = send
@@ -74,6 +77,9 @@ class StaleSensorMonitor:
         self.notify_target = notify_target or (lambda: "")
         self.delivery_error = delivery_error or (lambda: None)
         self.daily_reminder = daily_reminder
+        self.pm25_window_hours = pm25_window_hours
+        self.pm25_high_threshold = pm25_high_threshold
+        self.pm25_recovery_minutes = pm25_recovery_minutes
         self.store = Store(hass, 1, STORE_KEY, private=True, atomic_writes=True)
         self.lock = asyncio.Lock()
         self.active: dict[str, dict[str, Any]] = {}
@@ -168,7 +174,7 @@ class StaleSensorMonitor:
             return
         when = getattr(new, "last_changed", None) or dt_util.utcnow()
         async with self.lock:
-            cutoff = when - timedelta(hours=PM25_LOW_VARIATION_HOURS, minutes=30)
+            cutoff = when - timedelta(hours=self.pm25_window_hours, minutes=30)
             history = [
                 entry for entry in self.pm25_samples.get(eid, [])
                 if (_parse_datetime(entry[0]) or datetime.min.replace(
@@ -272,7 +278,7 @@ class StaleSensorMonitor:
             # selected physical PM2.5 sensors, not any diagnostic entities.
             # Samples are taken on the existing 15-minute scans, not via a
             # global state-report listener or Recorder/history queries.
-            cutoff = now - timedelta(hours=PM25_LOW_VARIATION_HOURS)
+            cutoff = now - timedelta(hours=self.pm25_window_hours)
             windows: dict[str, list[tuple[datetime, float]]] = {}
             samples: dict[str, list[list]] = {}
             for eid in tracked_pm25:
@@ -307,7 +313,11 @@ class StaleSensorMonitor:
                 if (row["status"] not in {"healthy", "suspect"} or eid not in windows
                         or row["age_hours"] > 1):
                     continue
-                assessment = pm25_low_variation_details(windows[eid], now)
+                assessment = pm25_low_variation_details(
+                    windows[eid], now, window_hours=self.pm25_window_hours,
+                    recovery_threshold=self.pm25_high_threshold,
+                    recovery_minutes=self.pm25_recovery_minutes,
+                )
                 row["low_variation_hours"] = assessment["window_hours"]
                 row["pm25_low_fraction"] = assessment["low_fraction"]
                 row["pm25_max_high_minutes"] = assessment["max_high_minutes"]
@@ -316,7 +326,7 @@ class StaleSensorMonitor:
                     row["status"] = "stale"
                     row["reason"] = "pm25_stuck_low"
                     row["age_hours"] = assessment["window_hours"]
-                    row["threshold_hours"] = float(PM25_LOW_VARIATION_HOURS)
+                    row["threshold_hours"] = float(self.pm25_window_hours)
 
             samples_changed = samples != self.pm25_samples
             self.pm25_samples = samples
@@ -389,6 +399,9 @@ class StaleSensorMonitor:
             "last_target": self.last_target,
             "notification_target": self.notify_target(),
             "daily_reminder_enabled": self.daily_reminder,
+            "pm25_window_hours": self.pm25_window_hours,
+            "pm25_high_threshold": self.pm25_high_threshold,
+            "pm25_recovery_minutes": self.pm25_recovery_minutes,
             "queued_events": len(self.queue),
             "counts": {"monitored": len(self.rows), **status_count},
             "rows": self.rows,
