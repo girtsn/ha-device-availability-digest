@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from math import isfinite
+import re
 
 AIR = frozenset({
     "pm1", "pm10", "pm25", "carbon_dioxide", "carbon_monoxide",
@@ -20,6 +21,38 @@ EXCLUDED_ID_PARTS = (
     "setpoint", "set_point", "effective_target", "control_mode",
     "upload_speed", "memory_usage", "cpu_usage",
 )
+# Text-level exclusions handle HA entity IDs that differ from their UI names.
+# These are control/status values, not continuous physical measurements.
+EXCLUDED_MEANING_PARTS = (
+    "program progress", "programme progress", "standby active",
+    "active power limitation", "power limitation", "power limit",
+    "effective target temperature", "target temperature",
+    "setpoint", "set point", "control mode",
+)
+
+
+def is_operational_value(entity_id: str, friendly_name: str = "",
+                         original_name: str = "") -> bool:
+    """Recognize status/configuration values using both IDs and HA names.
+
+    HA can expose a friendly name such as 'SMA Power Limit (I0)' while its
+    entity ID is unrelated, so excluding ID substrings alone is insufficient.
+    Explicit include remains an override in eligible_measurement.
+    """
+    if any(part in entity_id.casefold() for part in EXCLUDED_ID_PARTS):
+        return True
+    for label in (friendly_name, original_name):
+        normalized = re.sub(r"[^a-z0-9]+", " ", str(label).casefold()).strip()
+        if any(part in normalized for part in EXCLUDED_MEANING_PARTS):
+            return True
+    return False
+
+
+def retained_stale_events(events: list[dict], monitored_ids: set[str]) -> list[dict]:
+    """Discard undelivered events for entities retired by monitoring policy."""
+    return [event for event in events if event.get("entity_id") in monitored_ids]
+
+
 BAD_STATES = frozenset({"unknown", "unavailable", ""})
 PM25_LOW_VARIATION_HOURS = 24
 PM25_MIN_SAMPLES = 64
@@ -143,6 +176,8 @@ def eligible_measurement(
     category: str,
     labels: set[str],
     nonphysical: bool = False,
+    friendly_name: str = "",
+    original_name: str = "",
 ) -> bool:
     """Conservative automatic selection; explicit include overrides defaults."""
     if "stale_monitor_ignore" in labels:
@@ -151,7 +186,7 @@ def eligible_measurement(
         return True
     if not device_linked or nonphysical or category in {"diagnostic", "config"}:
         return False
-    if any(part in entity_id.lower() for part in EXCLUDED_ID_PARTS):
+    if is_operational_value(entity_id, friendly_name, original_name):
         return False
     if attributes.get("state_class") in {"total", "total_increasing"}:
         return False

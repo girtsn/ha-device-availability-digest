@@ -21,6 +21,7 @@ from .model import is_nonphysical_device
 from .stale_logic import (
     BAD_STATES, PM25_LOW_VARIATION_HOURS, classify, eligible_measurement,
     group_for, is_pm25, pm25_low_variation_details, timeout_hours,
+    retained_stale_events,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -169,7 +170,8 @@ class StaleSensorMonitor:
         category = getattr(entry.entity_category, "value", entry.entity_category)
         if not eligible_measurement(
             eid, new.state, attrs, bool(entry.device_id), category,
-            labels, nonphysical,
+            labels, nonphysical, friendly_name=new.name,
+            original_name=str(getattr(entry, "original_name", "") or ""),
         ):
             return
         when = getattr(new, "last_changed", None) or dt_util.utcnow()
@@ -221,13 +223,14 @@ class StaleSensorMonitor:
                 attrs = dict(state.attributes)
                 if not eligible_measurement(
                     eid, state.state, attrs,
-                    bool(entry and entry.device_id), category, labels, nonphysical
+                    bool(entry and entry.device_id), category, labels, nonphysical,
+                    friendly_name=state.name,
+                    original_name=str(getattr(entry, "original_name", "") or ""),
                 ):
-                    # Keep a previously flagged generic numeric sensor if it
-                    # has temporarily become unavailable; explicit ignore wins.
-                    if (eid not in old_active or "stale_monitor_ignore" in labels
-                            or category in {"diagnostic", "config"} or nonphysical):
-                        continue
+                    # Registry and current eligibility are authoritative.
+                    # Never resurrect an excluded entity just because it was
+                    # previously flagged, including during unknown/unavailable.
+                    continue
                 group = group_for(eid, str(attrs.get("device_class") or ""))
                 if is_pm25(eid, str(attrs.get("device_class") or "")):
                     tracked_pm25.add(eid)
@@ -335,6 +338,13 @@ class StaleSensorMonitor:
                 if row["status"] in {"stale", "suspect"}
             }
 
+            eligible_ids = {row["entity_id"] for row in rows}
+            retired = set(old_active) - eligible_ids
+            # Retired controls must not send stale/recovery emails. Retain
+            # diagnostic history but purge any not-yet-delivered queue items.
+            previous_queue_count = len(self.queue)
+            self.queue = retained_stale_events(self.queue, eligible_ids)
+
             for eid, row in next_active.items():
                 if eid not in old_active:
                     transitions.append({
@@ -345,12 +355,12 @@ class StaleSensorMonitor:
                         "event": "RECLASSIFIED", "at": _iso(now), **row,
                     })
             for eid, old in old_active.items():
-                if eid not in next_active:
-                    current = next((r for r in rows if r["entity_id"] == eid), None)
+                if eid not in next_active and eid in eligible_ids:
+                    current = next(r for r in rows if r["entity_id"] == eid)
                     transitions.append({
                         "event": "CLEARED", "at": _iso(now),
-                        **(current or old),
-                        "reason": "reporting_again" if current else "removed_or_excluded",
+                        **current,
+                        "reason": "reporting_again",
                     })
             self.active = next_active
             self.bad_since = next_bad
@@ -379,7 +389,8 @@ class StaleSensorMonitor:
                         )
             # Persist any transition or bad-state timer change, not hourly
             # age changes; measurements are rebuilt from live HA states.
-            if transitions or next_bad != previous_bad or samples_changed:
+            if (transitions or retired or len(self.queue) != previous_queue_count
+                    or next_bad != previous_bad or samples_changed):
                 await self._save()
             if send_digest:
                 await self._digest(now)
