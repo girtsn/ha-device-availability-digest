@@ -15,7 +15,7 @@ assert.match(api, /"stale": \(monitor\.stale\.snapshot\(\)/);
 assert.match(monitor, /async def scan\(self, send_digest: bool = False\)/);
 assert.match(rules, /"no_report"/);
 assert.match(init, /async_track_time_change/);
-assert.match(init, /hour in \\(8, 20\\)/);
+assert.match(init, /hour in \(8, 20\)/);
 assert.match(init, /observe_pm25_change/);
 assert.match(monitor, /pm25_stuck_low/);
 assert.match(monitor, /EMAIL_FAILED/);
