@@ -99,8 +99,10 @@ const eventTitle=(e)=>{
   if(isSourceDetails(e))return "Source details updated: "+(e.name||e.entity_id||"Source")+
     " (still "+(e.state??"unknown")+")";
   if(e.kind==="presence_source")return (e.name||e.entity_id||"Source")+": "+(e.previous??"unknown")+" → "+(e.state??"unknown");
+  if(e.kind==="stale_digest"&&e.event==="EMAIL_FAILED")
+    return "Email failed: "+(e.title||e.error||"Delivery failure");
   if(e.kind==="availability_digest"||e.kind==="stale_digest")
-    return "Email sent: "+(e.title||e.event||"Summary");
+    return "Email accepted by notify: "+(e.title||e.event||"Summary");
   if(e.kind==="stale_measurement")
     return (e.event||"MEASUREMENT")+": "+(e.name||e.entity_id||"sensor");
   return (e.event||"AVAILABILITY")+": "+(e.name||e.entity_id||"device");

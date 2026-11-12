@@ -311,7 +311,8 @@ class StaleSensorMonitor:
                 row["low_variation_hours"] = assessment["window_hours"]
                 row["pm25_low_fraction"] = assessment["low_fraction"]
                 row["pm25_max_high_minutes"] = assessment["max_high_minutes"]
-                if assessment["stuck"]:
+                was_stuck_low = (old_active.get(eid, {}).get("reason") == "pm25_stuck_low")
+                if assessment["stuck"] or (was_stuck_low and not assessment["sustained_high"]):
                     row["status"] = "stale"
                     row["reason"] = "pm25_stuck_low"
                     row["age_hours"] = assessment["window_hours"]
