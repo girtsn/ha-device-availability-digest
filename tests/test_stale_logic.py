@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components"
 from stale_logic import (
     classify, eligible_measurement, group_for, is_pm25,
     low_variation_pm25, pm25_low_variation_details, timeout_hours,
+    is_operational_value, retained_stale_events,
 )
 
 NOW = datetime(2026, 11, 9, 20, 0, tzinfo=timezone.utc)
@@ -149,6 +150,49 @@ class StaleLogicTests(unittest.TestCase):
             "sensor.kitchen_pm25", "0", {"device_class": "pm25"},
             True, None, set(),
         ))
+
+    def test_operational_names_excluded_even_with_unrelated_entity_id(self):
+        examples = [
+            ("sensor.device_1", "-1fl-sauna-tylo Standby active", None),
+            ("sensor.device_2", "sma-inverter-plant Active Power Limitation", "power"),
+            ("sensor.device_3", "sma-inverter-plant Power Limit (I0)", "power"),
+            ("sensor.device_4", "DishW-Siemens Program progress", None),
+            ("sensor.device_5", "1fl towel dryer Effective target temperature",
+             "temperature"),
+            ("sensor.device_6", "DishW Siemens Programme Progress", "power"),
+        ]
+        for eid, label, dc in examples:
+            with self.subTest(name=label):
+                self.assertTrue(is_operational_value(eid, label))
+                self.assertFalse(eligible_measurement(
+                    eid, "unknown", {"device_class": dc or "",
+                                     "state_class": "measurement"},
+                    True, None, set(), False, friendly_name=label,
+                ))
+        # An entity explicitly included by its user is still eligible.
+        self.assertTrue(eligible_measurement(
+            "sensor.device_1", "unknown", {"device_class": "power"},
+            True, None, {"stale_monitor_include"}, False,
+            friendly_name="-1fl-sauna-tylo Standby active",
+        ))
+
+    def test_real_metering_power_kept_and_retired_queue_purged(self):
+        # Do not discard genuine power telemetry merely because it is
+        # unavailable; it might be a legitimate measurement.
+        self.assertTrue(eligible_measurement(
+            "sensor.metering_power_absorbed", "unknown",
+            {"device_class": "power"}, True, None, set(),
+            friendly_name="sma-inverter Metering Power Absorbed",
+        ))
+        queued = [
+            {"entity_id": "sensor.device_1", "event": "FLAGGED"},
+            {"entity_id": "sensor.kitchen_pm25", "event": "FLAGGED"},
+            {"entity_id": "sensor.device_2", "event": "CLEARED"},
+        ]
+        self.assertEqual(retained_stale_events(
+            queued, {"sensor.kitchen_pm25"}),
+            [{"entity_id": "sensor.kitchen_pm25", "event": "FLAGGED"}],
+        )
 
     def test_unknown_and_unavailable_have_independent_grace(self):
         self.assertEqual(assessment(value="unknown", reported=100, changed=10)[0], "pending")
