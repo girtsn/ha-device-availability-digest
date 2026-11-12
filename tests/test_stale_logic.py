@@ -102,6 +102,24 @@ class StaleLogicTests(unittest.TestCase):
         self.assertTrue(result["stuck"], result)
         self.assertGreater(result["low_fraction"], 0.7)
 
+    def test_pm25_requires_full_displayed_observation_window(self):
+        start = NOW - timedelta(hours=24)
+        samples = [(start + timedelta(minutes=15 * i), 0.0)
+                   for i in range(97)]
+        self.assertTrue(pm25_low_variation_details(samples, now=NOW)["stuck"])
+        # 23.75h coverage previously passed despite displaying 24h.
+        almost_24h = samples[1:]
+        result = pm25_low_variation_details(almost_24h, now=NOW)
+        self.assertFalse(result["stuck"], result)
+        self.assertLess(result["window_hours"], 24)
+        # Retaining one checkpoint preceding the cutoff provides complete
+        # coverage even when no checkpoint is exactly on the window edge.
+        earlier = [(start - timedelta(minutes=15), 0.0)]
+        with_previous = earlier + almost_24h
+        result = pm25_low_variation_details(with_previous, now=NOW)
+        self.assertTrue(result["stuck"], result)
+        self.assertEqual(result["window_hours"], 24.0)
+
     def test_pm25_living_room_and_sustained_recovery(self):
         start = NOW - timedelta(hours=24)
         normal = [(start + timedelta(minutes=15 * i), float(2 + i % 16))

@@ -281,7 +281,9 @@ class StaleSensorMonitor:
             # selected physical PM2.5 sensors, not any diagnostic entities.
             # Samples are taken on the existing 15-minute scans, not via a
             # global state-report listener or Recorder/history queries.
-            cutoff = now - timedelta(hours=self.pm25_window_hours)
+            # Retain at least one checkpoint preceding the left window edge
+            # so the entire configured period can be time-weighted.
+            cutoff = now - timedelta(hours=self.pm25_window_hours, minutes=30)
             windows: dict[str, list[tuple[datetime, float]]] = {}
             samples: dict[str, list[list]] = {}
             for eid in tracked_pm25:
