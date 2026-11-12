@@ -109,12 +109,12 @@ If an unusual entity really measures a physical quantity, add the entity-level
   prove a physical failure.
 - `STALE / unknown` or `unavailable`: a physical measurement has entered an
   invalid state beyond its grace period.
-- `STALE / pm25_stuck_low`: 24 hours of unusually low, nearly static PM2.5.
+- `STALE / pm25_stuck_low`: 24 hours (configurable 12–72h) of unusually low, nearly static PM2.5.
   State-change events are captured between 15-minute scans. Zero-to-one
   readings dominate at least 70% of the observation period, while occasional
   readings of 2–5 µg/m³ are tolerated. Only a sustained rise **above 5 µg/m³
   for at least 45 minutes** clears an existing stuck-low classification;
-  a single spike cannot clear it. A sensor is assessed on its own readings,
+  a single spike cannot clear it. The observation window, high threshold and sustained recovery duration are configurable in integration Options (defaults 24h, 5 µg/m³, 45m). A sensor is assessed on its own readings,
   not by comparison with other devices or rooms. Genuine very clean air
   may still trigger this heuristic: STALE means likely stale *measurement*,
   not verified hardware failure.

@@ -7,6 +7,7 @@
 - Allow occasional 2–5 µg/m³ readings without clearing the diagnosis.
 - Require a sustained increase above 5 µg/m³ for at least 45 minutes for
   recovery. Brief spikes cannot clear existing stale flags.
+- Make PM2.5 observation window (12–72h), recovery threshold (2–20 µg/m³), and recovery duration (15–180min) configurable, retaining defaults of 24h, 5 µg/m³, and 45min.
 - Capture actual Home Assistant PM2.5 value changes between the 15-minute
   checks, preserving short spikes that prior snapshots could miss. Observations
   remain bounded and restart-persistent.

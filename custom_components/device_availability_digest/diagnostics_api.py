@@ -92,6 +92,8 @@ def ws_get_history(
                         "last_attempt": None, "last_attempt_success": None,
                         "last_error": None, "last_target": None,
                         "notification_target": None, "daily_reminder_enabled": False,
+                        "pm25_window_hours": 24, "pm25_high_threshold": 5.0,
+                        "pm25_recovery_minutes": 45,
                         "checked_at": None}),
         "retention_days": 90,
     })
