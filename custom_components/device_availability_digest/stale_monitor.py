@@ -20,7 +20,7 @@ from .const import DOMAIN
 from .model import is_nonphysical_device
 from .stale_logic import (
     BAD_STATES, PM25_LOW_VARIATION_HOURS, classify, eligible_measurement,
-    group_for, is_pm25, low_variation_pm25, timeout_hours,
+    group_for, is_pm25, pm25_low_variation_details, timeout_hours,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,11 +63,23 @@ class StaleSensorMonitor:
     def __init__(
         self, hass, send: Callable[[str, str], Awaitable[bool]],
         subject: Callable[[str], str], history,
+        notify_target: Callable[[], str] | None = None,
+        delivery_error: Callable[[], str | None] | None = None,
+        daily_reminder: bool = True,
+        pm25_window_hours: int = PM25_LOW_VARIATION_HOURS,
+        pm25_high_threshold: float = 5.0,
+        pm25_recovery_minutes: int = 45,
     ) -> None:
         self.hass = hass
         self.send = send
         self.subject = subject
         self.history = history
+        self.notify_target = notify_target or (lambda: "")
+        self.delivery_error = delivery_error or (lambda: None)
+        self.daily_reminder = daily_reminder
+        self.pm25_window_hours = pm25_window_hours
+        self.pm25_high_threshold = pm25_high_threshold
+        self.pm25_recovery_minutes = pm25_recovery_minutes
         self.store = Store(hass, 1, STORE_KEY, private=True, atomic_writes=True)
         self.lock = asyncio.Lock()
         self.active: dict[str, dict[str, Any]] = {}
@@ -75,6 +87,11 @@ class StaleSensorMonitor:
         self.pm25_samples: dict[str, list[list]] = {}
         self.queue: list[dict[str, Any]] = []
         self.last_digest: str | None = None
+        self.last_attempt: str | None = None
+        self.last_attempt_success: bool | None = None
+        self.last_error: str | None = None
+        self.last_target: str | None = None
+        self.last_reminder_date: str | None = None
         self.checked_at: str | None = None
         self.rows: list[dict[str, Any]] = []
         self.started = False
@@ -86,12 +103,22 @@ class StaleSensorMonitor:
         self.pm25_samples = dict(data.get("pm25_samples") or {})
         self.queue = list(data.get("queue") or [])[-1000:]
         self.last_digest = data.get("last_digest")
+        self.last_attempt = data.get("last_attempt")
+        self.last_attempt_success = data.get("last_attempt_success")
+        self.last_error = data.get("last_error")
+        self.last_target = data.get("last_target")
+        self.last_reminder_date = data.get("last_reminder_date")
 
     async def _save(self) -> None:
         await self.store.async_save({
             "active": self.active, "bad_since": self.bad_since,
             "pm25_samples": self.pm25_samples,
             "queue": self.queue[-1000:], "last_digest": self.last_digest,
+            "last_attempt": self.last_attempt,
+            "last_attempt_success": self.last_attempt_success,
+            "last_error": self.last_error,
+            "last_target": self.last_target,
+            "last_reminder_date": self.last_reminder_date,
         })
 
     def _details(self, entity_id: str, state, registry_entry, group: str) -> dict:
@@ -112,6 +139,59 @@ class StaleSensorMonitor:
             "integration": registry_entry.platform if registry_entry else "unknown",
             "group": group,
         }
+
+    async def observe_pm25_change(self, event) -> None:
+        """Capture real HA PM2.5 value transitions between 15-minute scans.
+
+        This supplements checkpoints so that even brief high-value excursions
+        participate in the time-weighted anomaly assessment. The private
+        history is bounded and never compares rooms or other devices.
+        """
+        new = event.data.get("new_state")
+        old = event.data.get("old_state")
+        eid = event.data.get("entity_id", "")
+        if new is None or not eid.startswith("sensor.") or (
+            old is not None and old.state == new.state
+        ):
+            return
+        entry = entity_registry.async_get(self.hass).async_get(eid)
+        if entry is None or entry.disabled_by is not None:
+            return
+        attrs = dict(new.attributes)
+        if not is_pm25(eid, str(attrs.get("device_class") or "")):
+            return
+        labels = _label_names(self.hass, entry)
+        device = (device_registry.async_get(self.hass).async_get(entry.device_id)
+                  if entry.device_id else None)
+        nonphysical = bool(device and is_nonphysical_device(
+            device.entry_type, device.manufacturer, device.model
+        ))
+        category = getattr(entry.entity_category, "value", entry.entity_category)
+        if not eligible_measurement(
+            eid, new.state, attrs, bool(entry.device_id), category,
+            labels, nonphysical,
+        ):
+            return
+        when = getattr(new, "last_changed", None) or dt_util.utcnow()
+        async with self.lock:
+            cutoff = when - timedelta(hours=self.pm25_window_hours, minutes=30)
+            history = [
+                entry for entry in self.pm25_samples.get(eid, [])
+                if (_parse_datetime(entry[0]) or datetime.min.replace(
+                    tzinfo=timezone.utc)) >= cutoff
+            ]
+            if new.state in BAD_STATES:
+                history = []  # an unavailable period breaks continuity
+            else:
+                try:
+                    numeric = float(new.state)
+                except (ValueError, TypeError):
+                    return
+                if not isfinite(numeric):
+                    return
+                history.append([_iso(when), numeric])
+            self.pm25_samples[eid] = history[-3000:]
+            await self._save()
 
     async def scan(self, send_digest: bool = False) -> None:
         """Re-evaluate sensor reports. The twice-daily call also sends deltas."""
@@ -182,6 +262,8 @@ class StaleSensorMonitor:
                     "status": status,
                     "reason": reason,
                     "age_hours": round(age, 2),
+                    "report_age_hours": round(max(0, (now - reported).total_seconds() / 3600), 2),
+                    "unchanged_hours": round(max(0, (now - changed).total_seconds() / 3600), 2),
                     "threshold_hours": limit,
                     "last_reported": _iso(reported),
                     "last_changed": _iso(changed),
@@ -196,7 +278,7 @@ class StaleSensorMonitor:
             # selected physical PM2.5 sensors, not any diagnostic entities.
             # Samples are taken on the existing 15-minute scans, not via a
             # global state-report listener or Recorder/history queries.
-            cutoff = now - timedelta(hours=PM25_LOW_VARIATION_HOURS)
+            cutoff = now - timedelta(hours=self.pm25_window_hours)
             windows: dict[str, list[tuple[datetime, float]]] = {}
             samples: dict[str, list[list]] = {}
             for eid in tracked_pm25:
@@ -228,17 +310,23 @@ class StaleSensorMonitor:
             # A fresh HA report is required; no-report is checked separately.
             for row in rows:
                 eid = row["entity_id"]
-                if (row["status"] != "healthy" or eid not in windows
+                if (row["status"] not in {"healthy", "suspect"} or eid not in windows
                         or row["age_hours"] > 1):
                     continue
-                if low_variation_pm25(windows[eid]):
-                    row["status"] = "suspect"
-                    row["reason"] = "pm25_low_variation_self"
-                    row["age_hours"] = round(
-                        (windows[eid][-1][0] - windows[eid][0][0]).total_seconds() / 3600,
-                        2,
-                    )
-                    row["threshold_hours"] = float(PM25_LOW_VARIATION_HOURS)
+                assessment = pm25_low_variation_details(
+                    windows[eid], now, window_hours=self.pm25_window_hours,
+                    recovery_threshold=self.pm25_high_threshold,
+                    recovery_minutes=self.pm25_recovery_minutes,
+                )
+                row["low_variation_hours"] = assessment["window_hours"]
+                row["pm25_low_fraction"] = assessment["low_fraction"]
+                row["pm25_max_high_minutes"] = assessment["max_high_minutes"]
+                was_stuck_low = (old_active.get(eid, {}).get("reason") == "pm25_stuck_low")
+                if assessment["stuck"] or (was_stuck_low and not assessment["sustained_high"]):
+                    row["status"] = "stale"
+                    row["reason"] = "pm25_stuck_low"
+                    row["age_hours"] = assessment["window_hours"]
+                    row["threshold_hours"] = float(self.pm25_window_hours)
 
             samples_changed = samples != self.pm25_samples
             self.pm25_samples = samples
@@ -251,6 +339,10 @@ class StaleSensorMonitor:
                 if eid not in old_active:
                     transitions.append({
                         "event": "FLAGGED", "at": _iso(now), **row,
+                    })
+                elif (old_active[eid].get("status"), old_active[eid].get("reason")) != (row["status"], row["reason"]):
+                    transitions.append({
+                        "event": "RECLASSIFIED", "at": _iso(now), **row,
                     })
             for eid, old in old_active.items():
                 if eid not in next_active:
@@ -301,25 +393,45 @@ class StaleSensorMonitor:
             "enabled": True, "started": self.started,
             "checked_at": self.checked_at,
             "last_digest": self.last_digest,
+            "last_attempt": self.last_attempt,
+            "last_attempt_success": self.last_attempt_success,
+            "last_error": self.last_error,
+            "last_target": self.last_target,
+            "notification_target": self.notify_target(),
+            "daily_reminder_enabled": self.daily_reminder,
+            "pm25_window_hours": self.pm25_window_hours,
+            "pm25_high_threshold": self.pm25_high_threshold,
+            "pm25_recovery_minutes": self.pm25_recovery_minutes,
             "queued_events": len(self.queue),
             "counts": {"monitored": len(self.rows), **status_count},
             "rows": self.rows,
         }
 
     async def _digest(self, now: datetime) -> None:
-        if not self.queue:
+        """Send queued changes at 08:00/20:00 and one optional daily reminder."""
+        local = dt_util.as_local(now)
+        morning = local.hour == 8
+        today = local.date().isoformat()
+        reminder = bool(
+            self.daily_reminder and morning and self.active
+            and self.last_reminder_date != today
+        )
+        if not self.queue and not reminder:
             return
         queued = list(self.queue)
         newly = [e for e in queued if e["event"] == "FLAGGED"]
         cleared = [e for e in queued if e["event"] == "CLEARED"]
-        title = self.subject(
-            f"SENSOR MEASUREMENTS: {len(newly)} flagged, {len(cleared)} cleared"
-        )
+        reclassified = [e for e in queued if e["event"] == "RECLASSIFIED"]
+        detail = (f"SENSOR MEASUREMENTS: {len(newly)} flagged, "
+                  f"{len(reclassified)} reclassified, {len(cleared)} cleared")
+        if reminder and not queued:
+            detail = f"SENSOR MEASUREMENTS: daily reminder ({len(self.active)} unresolved)"
+        title = self.subject(detail)
         lines = [
-            "Stale numeric measurement digest (changes since previous email)",
-            "Checked: " + dt_util.as_local(now).strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "Stale numeric measurement digest (changes and unresolved reminders)",
+            "Checked: " + local.strftime("%Y-%m-%d %H:%M:%S %Z"),
             f"Monitored: {len(self.rows)} | Stale: {len([r for r in self.rows if r['status'] == 'stale'])}"
-            f" | Suspected frozen/low-variation: {len([r for r in self.rows if r['status'] == 'suspect'])}",
+            f" | Suspect: {len([r for r in self.rows if r['status'] == 'suspect'])}",
             "",
             "EVENTS (chronological):",
         ]
@@ -331,6 +443,8 @@ class StaleSensorMonitor:
                 f" | {item['reason']} | value {item['value']} {item['unit']}"
                 f" | {item['age_hours']}h / {item['threshold_hours']}h threshold"
             )
+        if not queued:
+            lines.append("No new changes; daily unresolved reminder.")
         if self.active:
             lines.extend(["", f"CURRENTLY FLAGGED ({len(self.active)}):"])
             for row in sorted(self.active.values(), key=lambda r: r["entity_id"]):
@@ -338,17 +452,35 @@ class StaleSensorMonitor:
                     f"- {row['name']} / {row['entity_id']} / {row['status']} "
                     f"({row['reason']}; {row['age_hours']}h of {row['threshold_hours']}h)"
                 )
-        lines.extend(["", "Unavailable and unknown states use a dwell period.",
-                      "Exact frozen values need an opt-in label; persistent near-zero PM2.5 is an automatic self-only heuristic.",
+        lines.extend(["", "Unknown/unavailable states use a dwell period.",
+                      "Persistently near-zero PM2.5 may be classified STALE with reason pm25_stuck_low.",
                       "Review the Stale sensors tab in the Availability dashboard."])
-        if await self.send(title, "\n".join(lines)):
-            # A failed delivery retains the event queue until the next slot.
+        self.last_attempt = _iso(now)
+        self.last_target = self.notify_target()
+        success = await self.send(title, "\n".join(lines))
+        self.last_attempt_success = success
+        if success:
             self.queue = self.queue[len(queued):]
             self.last_digest = _iso(now)
+            self.last_error = None
+            if reminder:
+                self.last_reminder_date = today
             await self._save()
             if self.history:
                 await self.history.record(
                     "stale_digest", event="SUMMARY_EMAIL",
                     title=title, flagged_count=len(newly),
+                    reclassified_count=len(reclassified),
                     cleared_count=len(cleared), monitored_count=len(self.rows),
+                    reminder=reminder,
+                )
+        else:
+            self.last_error = self.delivery_error() or "Notification service rejected the message. See Home Assistant logs."
+            await self._save()  # keep queue for retry at next scheduled slot
+            if self.history:
+                await self.history.record(
+                    "stale_digest", event="EMAIL_FAILED",
+                    title=title, target=self.last_target,
+                    error=self.last_error,
+                    queued_count=len(self.queue),
                 )

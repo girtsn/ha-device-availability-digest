@@ -7,7 +7,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "device_availability_digest"))
 from stale_logic import (
     classify, eligible_measurement, group_for, is_pm25,
-    low_variation_pm25, timeout_hours,
+    low_variation_pm25, pm25_low_variation_details, timeout_hours,
 )
 
 NOW = datetime(2026, 11, 9, 20, 0, tzinfo=timezone.utc)
@@ -87,33 +87,68 @@ class StaleLogicTests(unittest.TestCase):
         self.assertEqual(assessment(reported=48)[0], "stale")
         self.assertEqual(assessment(reported=47.9)[0], "healthy")
 
-    def test_near_zero_pm25_only_own_history_is_suspect(self):
+    def test_pm25_stuck_low_with_occasional_2_to_5(self):
         self.assertTrue(is_pm25("sensor.kitchen_pm2_5", ""))
         self.assertTrue(is_pm25("sensor.kitchen", "pm25"))
         self.assertFalse(is_pm25("sensor.kitchen_temperature", "temperature"))
-        start = NOW - timedelta(hours=48)
-        own = [
-            (start + timedelta(minutes=15 * i), float(i % 3))
-            for i in range(193)
+        start = NOW - timedelta(hours=24)
+        readings = [(start + timedelta(minutes=15 * i), 0.0 if i % 11 else 1.0)
+                    for i in range(97)]
+        readings[12] = (readings[12][0], 3.0)
+        readings[40] = (readings[40][0], 5.0)
+        readings[73] = (readings[73][0], 2.0)
+        result = pm25_low_variation_details(readings)
+        self.assertTrue(result["stuck"], result)
+        self.assertGreater(result["low_fraction"], 0.7)
+
+    def test_pm25_living_room_and_sustained_recovery(self):
+        start = NOW - timedelta(hours=24)
+        normal = [(start + timedelta(minutes=15 * i), float(2 + i % 16))
+                  for i in range(97)]
+        self.assertFalse(low_variation_pm25(normal))
+        kitchen = [(start + timedelta(minutes=15 * i), 0.0)
+                   for i in range(97)]
+        # A brief excursion above 5 is NOT a convincing recovery.
+        kitchen[15] = (kitchen[15][0], 8.0)
+        self.assertTrue(low_variation_pm25(kitchen))
+        # At least 45 continuous minutes above 5 is meaningful.
+        kitchen[70:74] = [(kitchen[i][0], 8.0) for i in range(70, 74)]
+        result = pm25_low_variation_details(kitchen)
+        self.assertFalse(result["stuck"])
+        self.assertTrue(result["sustained_high"])
+
+    def test_configurable_pm25_window_and_recovery(self):
+        start = NOW - timedelta(hours=12)
+        samples = [(start + timedelta(minutes=15 * i), 0.0) for i in range(49)]
+        self.assertTrue(pm25_low_variation_details(samples, window_hours=12)["stuck"])
+        samples[12] = (samples[12][0], 6.0)
+        self.assertTrue(pm25_low_variation_details(samples, window_hours=12,
+                        recovery_threshold=7.0)["stuck"])
+        self.assertFalse(pm25_low_variation_details(samples, window_hours=24)["stuck"])
+
+    def test_pm25_coverage_and_sensor_exclusions(self):
+        start = NOW - timedelta(hours=24)
+        samples = [(start + timedelta(minutes=15 * i), 0.0)
+                   for i in range(97)]
+        self.assertFalse(low_variation_pm25(samples[-40:]))
+        self.assertFalse(low_variation_pm25(samples[::4]))
+        excluded = [
+            "sensor.dishw_siemens_program_progress",
+            "sensor.sauna_standby_active",
+            "sensor.sma_active_power_limitation",
+            "sensor.sma_power_limit_i0",
+            "sensor.towel_dryer_effective_target_temperature",
         ]
-        # No other sensor data is needed, even though the value changes.
-        self.assertTrue(low_variation_pm25(own))
-        # A fresh or too-sparse history cannot establish persistence.
-        self.assertFalse(low_variation_pm25(own[-50:]))
-        self.assertFalse(low_variation_pm25(own[::4]))
-        # A legitimately changing PM2.5 signal should not be flagged.
-        varied = [(t, float(2 + i % 7)) for i, (t, _) in enumerate(own)]
-        self.assertFalse(low_variation_pm25(varied))
-        # A single reading outside the narrow range should break the run.
-        spikes = list(own)
-        spikes[len(spikes) // 2] = (spikes[len(spikes) // 2][0], 8.0)
-        self.assertFalse(low_variation_pm25(spikes))
-        # Non-finite and negative readings must not indicate a flatline.
-        invalid = list(own)
-        invalid[-2] = (invalid[-2][0], float("nan"))
-        self.assertFalse(low_variation_pm25(invalid))
-        invalid[-2] = (invalid[-2][0], -1.0)
-        self.assertFalse(low_variation_pm25(invalid))
+        for eid in excluded:
+            with self.subTest(eid=eid):
+                self.assertFalse(eligible_measurement(
+                    eid, "unknown", {"unit_of_measurement": "W"},
+                    True, None, set(),
+                ))
+        self.assertTrue(eligible_measurement(
+            "sensor.kitchen_pm25", "0", {"device_class": "pm25"},
+            True, None, set(),
+        ))
 
     def test_unknown_and_unavailable_have_independent_grace(self):
         self.assertEqual(assessment(value="unknown", reported=100, changed=10)[0], "pending")

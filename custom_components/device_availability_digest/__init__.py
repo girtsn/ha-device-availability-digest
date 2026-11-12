@@ -36,6 +36,7 @@ from .model import (
 from .history import DiagnosticHistory
 from .diagnostics_api import ws_get_history
 from .stale_monitor import StaleSensorMonitor
+from .stale_logic import is_pm25
 
 _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -103,7 +104,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await monitor.load()
     if options.get("stale_monitor_enabled", True):
         monitor.stale = StaleSensorMonitor(
-            hass, monitor._send_stale, monitor._subject, monitor.history
+            hass, monitor._send_stale, monitor._subject, monitor.history,
+            notify_target=lambda: monitor.stale_notify_entity,
+            delivery_error=lambda: monitor.last_stale_send_error,
+            daily_reminder=options.get("stale_daily_reminder_enabled", True),
+            pm25_window_hours=options.get("pm25_stuck_low_window_hours", 24),
+            pm25_high_threshold=options.get("pm25_recovery_threshold_ugm3", 5.0),
+            pm25_recovery_minutes=options.get("pm25_recovery_minutes", 45),
         )
         await monitor.stale.load()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = monitor
@@ -111,6 +118,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @callback
     def on_change(event: Event) -> None:
         hass.async_create_task(monitor.on_change(event))
+        new = event.data.get("new_state")
+        eid = event.data.get("entity_id", "")
+        if (monitor.stale is not None and new is not None
+                and eid.startswith("sensor.")
+                and is_pm25(eid, str(new.attributes.get("device_class") or ""))):
+            hass.async_create_task(monitor.stale.observe_pm25_change(event))
 
     @callback
     def on_timer(now: datetime) -> None:
@@ -203,6 +216,7 @@ class AvailabilityDigest:
             or ("notify.email_girts" if hass.states.get("notify.email_girts")
                 else self.notify_entity)
         )
+        self.last_stale_send_error: str | None = None
         self._representatives: dict[str, str] = {}
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
         self.state = AvailabilityState()
@@ -560,6 +574,7 @@ class AvailabilityDigest:
 
     async def _send_stale(self, title: str, message: str) -> bool:
         """Send stale sensor findings to their own notification recipient."""
+        self.last_stale_send_error = None
         try:
             await self.hass.services.async_call(
                 "notify", "send_message",
@@ -568,7 +583,8 @@ class AvailabilityDigest:
                 blocking=True,
             )
             return True
-        except Exception:
+        except Exception as exc:
+            self.last_stale_send_error = f"{type(exc).__name__}: {exc}"[:500]
             _LOGGER.exception("Stale measurement email failed; will retry")
             return False
 

@@ -1,7 +1,7 @@
 """Pure rules for physical numeric measurements, independent of Home Assistant."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import isfinite
 
 AIR = frozenset({
@@ -15,11 +15,17 @@ EXCLUDED_ID_PARTS = (
     "link_speed", "linkspeed", "link_quality", "rssi", "signal_strength",
     "uptime", "last_seen", "last_update", "firmware", "wifi_signal",
     "battery", "diagnostic", "packet", "retransmit", "download_speed",
+    "program_progress", "programme_progress", "standby_active",
+    "active_power_limitation", "power_limit", "target_temperature",
+    "setpoint", "set_point", "effective_target", "control_mode",
     "upload_speed", "memory_usage", "cpu_usage",
 )
 BAD_STATES = frozenset({"unknown", "unavailable", ""})
-PM25_LOW_VARIATION_HOURS = 48
-PM25_MIN_SAMPLES = 96
+PM25_LOW_VARIATION_HOURS = 24
+PM25_MIN_SAMPLES = 64
+PM25_HIGH_RECOVERY_MINUTES = 45
+PM25_MAX_REPORT_GAP_MINUTES = 120
+PM25_MIN_LOW_FRACTION = 0.70
 
 
 def group_for(entity_id: str, device_class: str) -> str:
@@ -44,22 +50,81 @@ def is_pm25(entity_id: str, device_class: str) -> bool:
     )
 
 
-def low_variation_pm25(
-    own_samples: list[tuple[datetime, float]],
-) -> bool:
-    """Flag a near-zero PM2.5 measurement that barely varies for ~2 days.
+def pm25_low_variation_details(
+    own_samples: list[tuple[datetime, float]], now: datetime | None = None,
+    *, window_hours: int = PM25_LOW_VARIATION_HOURS,
+    recovery_threshold: float = 5.0,
+    recovery_minutes: int = PM25_HIGH_RECOVERY_MINUTES,
+) -> dict:
+    """Identify a 24-hour stuck-low signal without treating small spikes as recovery.
 
-    This is evaluated solely from the sensor's own observations, never from
-    other rooms, devices or peer measurements. Samples are produced by
-    15-minute scans and retained for 48 hours across HA restarts. Require
-    enough coverage so short-lived clean-air readings are not flagged.
-    A prolonged genuinely low reading is possible, hence SUSPECT, not STALE.
+    Use only this sensor's own samples. Samples include HA value-change
+    events (to catch short spikes) and periodic checkpoints for coverage.
+    Durations are time weighted: a few readings of 2-5 are acceptable, but
+    a sensor that spends significant time there is not considered stuck.
     """
-    if len(own_samples) < PM25_MIN_SAMPLES:
-        return False
-    if (own_samples[-1][0] - own_samples[0][0]).total_seconds() < 46 * 3600:
-        return False
-    return all(isfinite(value) and 0 <= value <= 2 for _, value in own_samples)
+    result = {
+        "stuck": False, "sustained_high": False, "window_hours": 0.0,
+        "low_fraction": 0.0, "mid_fraction": 0.0,
+        "max_high_minutes": 0.0, "sample_count": 0,
+    }
+    samples = sorted(
+        ((when, float(value)) for when, value in own_samples
+         if when.tzinfo is not None and isfinite(value)),
+        key=lambda item: item[0],
+    )
+    if not samples:
+        return result
+    end = now or samples[-1][0]
+    start = end - timedelta(hours=window_hours)
+    # Carry forward the most recent value before the window if available,
+    # rather than treating a missing beginning as fresh data.
+    earlier = [sample for sample in samples if sample[0] < start]
+    window = ([ (start, earlier[-1][1]) ] if earlier else []) + [
+        (when, value) for when, value in samples if start <= when <= end
+    ]
+    result["sample_count"] = len(window)
+    min_samples = max(12, round(PM25_MIN_SAMPLES * window_hours / PM25_LOW_VARIATION_HOURS))
+    if len(window) < min_samples:
+        return result
+    coverage = (window[-1][0] - window[0][0]).total_seconds()
+    result["window_hours"] = round(coverage / 3600, 2)
+    if coverage < (window_hours - 1) * 3600:
+        return result
+    low_seconds = mid_seconds = high_seconds = 0.0
+    high_run = max_high = 0.0
+    for (when, value), (next_when, _) in zip(window, window[1:] + [(end, window[-1][1])]):
+        duration = max(0.0, (next_when - when).total_seconds())
+        if duration > PM25_MAX_REPORT_GAP_MINUTES * 60:
+            return result  # insufficient observation continuity
+        if value <= 1 and value >= 0:
+            low_seconds += duration
+        elif 1 < value <= recovery_threshold:
+            mid_seconds += duration
+        elif value > recovery_threshold:
+            high_seconds += duration
+        if value > recovery_threshold:
+            high_run += duration
+            max_high = max(max_high, high_run)
+        else:
+            high_run = 0.0
+    total = max(1.0, (end - window[0][0]).total_seconds())
+    result["low_fraction"] = round(low_seconds / total, 3)
+    result["mid_fraction"] = round(mid_seconds / total, 3)
+    result["max_high_minutes"] = round(max_high / 60, 2)
+    result["sustained_high"] = max_high >= recovery_minutes * 60
+    result["stuck"] = bool(
+        result["low_fraction"] >= PM25_MIN_LOW_FRACTION
+        and mid_seconds / total <= (1 - PM25_MIN_LOW_FRACTION)
+        and high_seconds / total <= 0.1
+        and not result["sustained_high"]
+    )
+    return result
+
+
+def low_variation_pm25(own_samples: list[tuple[datetime, float]]) -> bool:
+    """Compatibility wrapper for the self-only low-variation rule."""
+    return pm25_low_variation_details(own_samples)["stuck"]
 
 
 def timeout_hours(group: str, labels: set[str]) -> int:
@@ -98,8 +163,7 @@ def eligible_measurement(
     # remain eligible even though their current value is not numeric.
     if dc in AIR | AMBIENT | ELECTRICAL or group_for(entity_id, dc) == "air":
         return True
-    if state in BAD_STATES and (attributes.get("state_class") == "measurement"
-                                or attributes.get("unit_of_measurement") not in (None, "")):
+    if state in BAD_STATES and attributes.get("state_class") == "measurement":
         return True
     try:
         numeric = isfinite(float(state))

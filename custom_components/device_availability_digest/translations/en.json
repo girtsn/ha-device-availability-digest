@@ -35,7 +35,11 @@
           "excluded_device_entities": "Excluded device anchors",
           "connectivity_entities": "Explicit connectivity sensors",
           "stale_monitor_enabled": "Monitor stale sensor measurements (15-minute checks, email at 08:00 and 20:00)",
-          "stale_notify_entity": "Stale sensor notification entity (e.g. notify.email_girts)"
+          "stale_notify_entity": "Stale sensor notification entity (e.g. notify.email_girts)",
+          "stale_daily_reminder_enabled": "Send a daily 08:00 reminder while stale measurements remain unresolved",
+          "pm25_stuck_low_window_hours": "PM2.5 stuck-low observation window (hours; default 24)",
+          "pm25_recovery_threshold_ugm3": "PM2.5 significant-rise threshold (µg/m³; default 5)",
+          "pm25_recovery_minutes": "PM2.5 sustained recovery duration (minutes; default 45)"
         }
       }
     },

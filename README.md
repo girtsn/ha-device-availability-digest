@@ -1,6 +1,6 @@
 # Device Availability Digest
 
-**v0.3.12 Home Presence mode timeline:** The Home Presence tab now displays
+**v0.3.14 stale-sensor corrections:** 24-hour stuck-low PM2.5 classification, real event sampling, filtering of configuration values, email delivery diagnostics and daily unresolved reminders.\n\n**v0.3.12 Home Presence mode timeline:** The Home Presence tab now displays
 a categorical Home / Away / Unknown timeline directly below the current-status
 tiles, using Home Assistant Recorder history (the same approach as the Tado X
 Heating overview). It replaces the previous presence event-count histogram
@@ -17,7 +17,7 @@ of `sensor.home_presence`.
 
 Home Assistant integration that detects device disconnections, confirms them after a delay, and prevents a flood of individual notifications during network updates.
 
-**Status: v0.3.12 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
+**Status: v0.3.14 HACS/Marketplace custom-repository release.** The restart-safe state machine has automated tests; the complete integration still needs an end-to-end test on a live Home Assistant instance before critical use.
 
 ## Features
 
@@ -93,88 +93,61 @@ sidebar panel is removed too; disabling it does not erase the separately
 persisted diagnostic history.
 
 
-## Stale sensor measurements (v0.3.11)
+## Stale sensor measurements (v0.3.14)
 
-The integration now includes a **separate** restart-safe monitor of physical numeric
-measurement sensors. It scans **every 15 minutes** and sends **Girts-only** alerts
-to a **separately configurable stale-sensor notify entity** **at 08:00 and
-20:00 local time**. It defaults to `notify.email_girts` when that entity
-exists and otherwise uses the main availability notifier.
-Emails are quiet: they contain only *newly flagged* and *cleared* readings since
-the last successful digest, plus a current flagged summary. If there are no
-changes, no email is sent. Failed emails leave transitions queued for retry
-at the next notification slot. This does **not** modify device-offline alerts
-or the Home Presence sensor.
+The separate restart-safe monitor checks physical numeric measurements every
+15 minutes. It excludes setpoints, programme progress, operational controls,
+standby status, SMA power limits, totals, diagnostics and nonphysical services.
+If an unusual entity really measures a physical quantity, add the entity-level
+`stale_monitor_include` label. To exclude any other entity, use
+`stale_monitor_ignore` (always takes precedence).
 
-Eligibility defaults to registered, enabled, physical device-backed numeric
-measurement sensors. Air-quality, temperature, humidity, pressure, illuminance,
-power, voltage and current sensors are included. Diagnostic entities, link-speed
-counters, Wi-Fi signal metrics, battery levels, service/virtual devices and
-accumulating totals are excluded. Entities with recognised measurement classes
-or units can stay eligible during an unknown/unavailable state.
+**Signals and classification**
 
-**Entity-level labels** (create under Settings → Areas, labels & zones → Labels):
+- `STALE / no_report`: no Home Assistant report within the applicable timeout.
+  Some integrations publish only state changes, so this does not by itself
+  prove a physical failure.
+- `STALE / unknown` or `unavailable`: a physical measurement has entered an
+  invalid state beyond its grace period.
+- `STALE / pm25_stuck_low`: 24 hours (configurable 12–72h) of unusually low, nearly static PM2.5.
+  State-change events are captured between 15-minute scans. Zero-to-one
+  readings dominate at least 70% of the observation period, while occasional
+  readings of 2–5 µg/m³ are tolerated. Only a sustained rise **above 5 µg/m³
+  for at least 45 minutes** clears an existing stuck-low classification;
+  a single spike cannot clear it. The observation window, high threshold and sustained recovery duration are configurable in integration Options (defaults 24h, 5 µg/m³, 45m). A sensor is assessed on its own readings,
+  not by comparison with other devices or rooms. Genuine very clean air
+  may still trigger this heuristic: STALE means likely stale *measurement*,
+  not verified hardware failure.
+- `SUSPECT / unchanged_value`: opt-in rule for continuously reported but
+  unchanged readings using `stale_monitor_watch_value`.
 
-- `stale_monitor_include`: monitor an entity outside the automatic selection
-- `stale_monitor_ignore`: always exclude (takes priority)
-- `stale_monitor_fast`: 3-hour missing-report timeout
-- `stale_monitor_slow`: 168-hour missing-report timeout
-- `stale_monitor_watch_value`: opt into a **suspected frozen** reading when
-  an unchanged value has exceeded its reporting threshold even though HA is
-  still receiving reports; this is a heuristic, not proof of failed hardware
+Other entity-level labels: `stale_monitor_fast` (3h missing-report timeout),
+`stale_monitor_slow` (168h), `stale_monitor_include`,
+`stale_monitor_ignore` and `stale_monitor_watch_value`. Default missing
+report thresholds are **12h air, 48h ambient, 72h electrical, 168h other**.
+Unknown/unavailable state grace is at most 12h for air or 24h for others.
 
-**Automatic PM2.5 low-variation heuristic (v0.3.11):** On the same
-15-minute scan, the integration retains a rolling **48-hour window** of
-each eligible physical PM2.5 sensor in its private restart-safe Store.
-**Every sensor is evaluated only against its own readings**, with no
-comparisons to other rooms/devices, peer baselines or outside sensors.
-If its readings have continuously stayed at **0–2 µg/m³** over at least
-46 hours, with 96 or more observations and a fresh Home Assistant report
-within the preceding hour, it is flagged
-**SUSPECT / pm25_low_variation_self**. Values moving 0→1→2
-do not reset the suspicion. A reading outside that interval breaks
-the observed run, and a genuine no-report condition remains a separate
-STALE diagnosis. A genuinely low-PM room can trigger this heuristic, so
-SUSPECT is not confirmation of defective hardware. Use
-`stale_monitor_ignore` to exclude sensors whose persistently low readings
-are expected.
+**Notification behaviour:** send queued new flags, reclassifications and
+clearances at **08:00 and 20:00 Home Assistant local time** to the independent
+`stale_notify_entity` (configured in integration Options).
+`stale_daily_reminder_enabled` (default on) also sends a daily 08:00 summary
+while any flags remain unresolved even if no changes occurred. Failed notify
+calls do not acknowledge the queued events, and are recorded as EMAIL_FAILED
+with the error and target. The dashboard shows last attempted delivery,
+target, result, error and queue depth. A successful HA notify service call
+does *not* guarantee actual delivery to the mailbox.
 
-No Recorder history is imported. The 48-hour window survives Home Assistant
-restarts, including existing v0.3.10 samples, but a new installation needs
-roughly two days of monitoring before the rule can flag a sensor.
+The dashboard presents actual time since HA last reported, time since the
+value changed, PM2.5 observation window and the separate reason-specific
+threshold. Storage is private and restart-persistent. Diagnostic history is
+retained for 90 days (up to 5,000 events).
 
-Default missing-report thresholds: **12 hours for air-quality, 48 for ambient,
-72 for electrical and 168 for other measurements**. For unknown/unavailable
-states the grace period is the smaller of the configured threshold and
-12 hours (air) or 24 hours (other). These thresholds deliberately match the
-previous automation. They can be overridden per entity with labels.
-
-The dashboard's **Stale sensors** tab shows all monitored entity IDs, latest
-value, time since the latest HA report, last change time, reason for flagging,
-threshold and any pending or suspected status. A button switches between
-flagged/pending readings and **All monitored**, so coverage can be audited.
-
-**Important limitation:** `last_reported` is refreshed when an integration
-writes an entity's state; Home Assistant does not independently poll every
-physical sensor. Some integrations report only *changed* readings, meaning
-an unchanged numeric value may be falsely marked as missing. On the other
-hand, a sensor constantly reporting a frozen zero looks healthy on reporting
-age alone. Use `stale_monitor_watch_value` selectively for exact frozen
-values. Persistent near-zero PM2.5 readings are also checked from the
-sensor's own observations, without any peer comparison. Both findings are
-**SUSPECT**, not confirmed hardware faults.
-
-The monitor uses a separate private HA Store, keyed by full entity IDs, so
-it needs **no Text helpers, hash truncation or 56-sensor cap**. Existing
-`input_text.stale_sensor_keys_a/b` helpers are not read or modified.
-Its history uses the existing 90-day admin-only diagnostic history.
-The new monitor starts fresh; historical helper hashes are **not migrated**.
-
-**After updating:** disable the old “Sensors - Stale measurements - Quiet
-email summary” automation to prevent duplicate notifications. The new
-monitor is enabled by default; it can be disabled in this integration's
-Options menu. Restart Home Assistant after updating via HACS, then open
-**Availability → Stale sensors** and use **All monitored** to check coverage.
+**Upgrading:** restart HA, check the stale-sensor `notify.*` recipient and
+the reminder option at **Settings → Devices & services → Device Availability
+Digest → Configure**. Disable the former YAML stale-sensor automation if
+still active. Review **Availability → Stale sensors → All monitored** and
+apply explicit include/ignore labels as needed. New installations need about
+24 hours of PM2.5 observation; saved older PM2.5 samples are reused.
 
 ## Tracker timestamps (v0.3.7)
 
