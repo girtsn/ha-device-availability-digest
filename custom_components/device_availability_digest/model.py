@@ -50,6 +50,21 @@ def is_nonphysical_device(entry_type: object, manufacturer: object, model: objec
         and str(model or "").strip().casefold() == "zone"
     )
 
+def is_optional_availability_device(
+    platforms: set[str], entity_ids: set[str], *, exclude_cast: bool = True,
+) -> bool:
+    """Exclude normally sleeping Cast endpoints and logical SMA plants.
+
+    Use registry source entities instead of broad device-name guesses, so the
+    physical SMA inverter and connected SHM2 meter remain eligible.
+    """
+    sources = {str(platform).casefold() for platform in platforms}
+    if exclude_cast and "cast" in sources:
+        return True
+    return "pysmaplus" in sources and any(
+        entity_id.startswith("sensor.my_plant_") for entity_id in entity_ids
+    )
+
 
 class AvailabilityState:
     """Pending, active and digest-window state, suitable for JSON storage."""
