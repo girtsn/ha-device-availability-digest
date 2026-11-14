@@ -26,11 +26,12 @@ from .const import (
     DOMAIN, DOMAINS, UNHEALTHY_CONNECTION,
     CONF_NOTIFY, CONF_OFFLINE_MINUTES, CONF_WINDOW_MINUTES,
     CONF_EXCLUDED_ENTITIES, CONF_EXCLUDED_DEVICE_ANCHORS,
-    CONF_CONNECTIVITY_ENTITIES, CONF_AUTO_EXCLUDE_TVS,
+    CONF_CONNECTIVITY_ENTITIES, CONF_AUTO_EXCLUDE_TVS, CONF_AUTO_EXCLUDE_CAST,
     CONF_EMAIL_SUBJECT_PREFIX, DEFAULT_EMAIL_SUBJECT_PREFIX,
 )
 from .model import (
     AvailabilityState, format_subject, is_nonphysical_device,
+    is_optional_availability_device,
     is_link_speed_entity, is_diagnostic_entity, parse, utcnow,
 )
 from .history import DiagnosticHistory
@@ -211,6 +212,7 @@ class AvailabilityDigest:
         self.excluded_device_anchors = set(options.get(CONF_EXCLUDED_DEVICE_ANCHORS, []))
         self.connectivity_entities = set(options.get(CONF_CONNECTIVITY_ENTITIES, []))
         self.auto_exclude_tvs = options.get(CONF_AUTO_EXCLUDE_TVS, True)
+        self.auto_exclude_cast = options.get(CONF_AUTO_EXCLUDE_CAST, True)
         self.stale_notify_entity = (
             options.get("stale_notify_entity")
             or ("notify.email_girts" if hass.states.get("notify.email_girts")
@@ -295,6 +297,16 @@ class AvailabilityDigest:
         if not device:
             return False
         if is_nonphysical_device(device.entry_type, device.manufacturer, device.model):
+            return True
+        registered = [
+            entry for entry in entity_registry.async_get(self.hass).entities.values()
+            if entry.device_id == did
+        ]
+        if is_optional_availability_device(
+            {entry.platform for entry in registered},
+            {entry.entity_id for entry in registered},
+            exclude_cast=self.auto_exclude_cast,
+        ):
             return True
         if not self.auto_exclude_tvs:
             return False

@@ -7,7 +7,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "device_availability_digest"))
 from model import (
     AvailabilityState, format_subject, is_nonphysical_device, is_service_device,
-    is_link_speed_entity, is_diagnostic_entity,
+    is_link_speed_entity, is_diagnostic_entity, is_optional_availability_device,
 )
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
@@ -62,6 +62,16 @@ class DigestTests(unittest.TestCase):
         self.assertFalse(is_nonphysical_device(None, "Tuya", "Zone"))
         self.assertFalse(is_nonphysical_device(None, "Hue", "Smart plug"))
         self.assertFalse(is_nonphysical_device(None, None, None))
+
+    def test_cast_sleep_and_sma_plant_excluded_without_hiding_hardware(self):
+        optional = is_optional_availability_device
+        self.assertTrue(optional({"cast"}, {"media_player.soundbar"}))
+        self.assertFalse(optional({"cast"}, {"media_player.soundbar"}, exclude_cast=False))
+        self.assertTrue(optional({"pysmaplus"}, {"sensor.my_plant_active_power_limitation"}))
+        self.assertFalse(optional({"pysmaplus"}, {"sensor.sbse4_0_50_pv_power"}))
+        self.assertFalse(optional({"hue"}, {"switch.hue_smart_plug_1"}))
+        self.assertFalse(optional({"other"}, {"sensor.my_plant_active_power_limitation"}))
+        self.assertFalse(optional(set(), set()))
 
     def test_retire_tado_zone_without_retiring_tado_api(self):
         state = AvailabilityState()

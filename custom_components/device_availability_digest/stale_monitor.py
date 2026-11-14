@@ -21,7 +21,7 @@ from .model import is_nonphysical_device
 from .stale_logic import (
     BAD_STATES, PM25_LOW_VARIATION_HOURS, classify, eligible_measurement,
     group_for, is_pm25, pm25_low_variation_details, timeout_hours,
-    retained_stale_events,
+    retained_stale_events, is_redundant_sma_grid_import,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -209,12 +209,20 @@ class StaleSensorMonitor:
             transitions: list[dict] = []
             tracked_pm25: set[str] = set()
             live_pm25: dict[str, float] = {}
+            has_shm2_import = (
+                self.hass.states.get("sensor.shm2_em_metering_power_absorbed") is not None
+            )
             for state in self.hass.states.async_all("sensor"):
                 eid = state.entity_id
                 entry = registry.async_get(eid)
                 if entry and entry.disabled_by is not None:
                     continue
                 labels = _label_names(self.hass, entry) if entry else set()
+                # The optional SBSE grid-import channel duplicates the SHM2 meter.
+                # No HA label is created; explicit include remains an override.
+                if (is_redundant_sma_grid_import(eid, has_shm2_import)
+                        and "stale_monitor_include" not in labels):
+                    continue
                 device = devices.async_get(entry.device_id) if entry and entry.device_id else None
                 nonphysical = bool(device and is_nonphysical_device(
                     device.entry_type, device.manufacturer, device.model

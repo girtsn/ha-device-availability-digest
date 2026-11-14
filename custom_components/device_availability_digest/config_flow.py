@@ -32,7 +32,7 @@ def _read_private_profile(filepath: str) -> dict[str, Any]:
         keys = {
             "notify_entity", "email_subject_prefix", "offline_minutes", "window_minutes",
             "excluded_entities", "excluded_device_entities",
-            "connectivity_entities", "auto_exclude_tvs", "stale_monitor_enabled",
+            "connectivity_entities", "auto_exclude_tvs", "auto_exclude_cast", "stale_monitor_enabled",
             "stale_notify_entity", "stale_daily_reminder_enabled",
             "pm25_stuck_low_window_hours", "pm25_recovery_threshold_ugm3",
             "pm25_recovery_minutes",
@@ -49,6 +49,7 @@ def _read_private_profile(filepath: str) -> dict[str, Any]:
 
 from .const import (
     CONF_AUTO_EXCLUDE_TVS,
+    CONF_AUTO_EXCLUDE_CAST,
     CONF_CONNECTIVITY_ENTITIES,
     CONF_EXCLUDED_DEVICE_ANCHORS,
     CONF_EXCLUDED_ENTITIES,
@@ -89,6 +90,7 @@ def discover_defaults(hass: HomeAssistant) -> dict[str, Any]:
         CONF_EXCLUDED_DEVICE_ANCHORS: excluded[:],
         CONF_CONNECTIVITY_ENTITIES: [],
         CONF_AUTO_EXCLUDE_TVS: True,
+        CONF_AUTO_EXCLUDE_CAST: True,
         "stale_monitor_enabled": True,
         "stale_notify_entity": "notify.email_girts" if "notify.email_girts" in available else (email or (available[0] if available else "")),
         "stale_daily_reminder_enabled": True,
@@ -112,6 +114,7 @@ def _form(values: dict[str, Any], advanced: bool) -> vol.Schema:
     if advanced:
         schema.update({
             vol.Required(CONF_AUTO_EXCLUDE_TVS, default=values.get(CONF_AUTO_EXCLUDE_TVS, True)): bool,
+            vol.Required(CONF_AUTO_EXCLUDE_CAST, default=values.get(CONF_AUTO_EXCLUDE_CAST, True)): bool,
             vol.Required("stale_monitor_enabled", default=values.get("stale_monitor_enabled", True)): bool,
             vol.Required("stale_daily_reminder_enabled", default=values.get("stale_daily_reminder_enabled", True)): bool,
             vol.Required("pm25_stuck_low_window_hours", default=values.get("pm25_stuck_low_window_hours", 24)): vol.All(vol.Coerce(int), vol.Range(min=12, max=72)),

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components"
 from stale_logic import (
     classify, eligible_measurement, group_for, is_pm25,
     low_variation_pm25, pm25_low_variation_details, timeout_hours,
-    is_operational_value, retained_stale_events,
+    is_operational_value, retained_stale_events, is_redundant_sma_grid_import,
 )
 
 NOW = datetime(2026, 11, 9, 20, 0, tzinfo=timezone.utc)
@@ -193,6 +193,14 @@ class StaleLogicTests(unittest.TestCase):
             True, None, {"stale_monitor_include"}, False,
             friendly_name="-1fl-sauna-tylo Standby active",
         ))
+
+    def test_redundant_sma_import_requires_shm2(self):
+        optional = is_redundant_sma_grid_import
+        self.assertTrue(optional("sensor.sbse4_0_50_metering_power_absorbed", True))
+        self.assertFalse(optional("sensor.sbse4_0_50_metering_power_absorbed", False))
+        self.assertFalse(optional("sensor.shm2_em_metering_power_absorbed", True))
+        self.assertFalse(optional("sensor.sbse4_0_50_pv_power", True))
+        self.assertFalse(optional("sensor.sbse4_0_50_metering_power_supplied", True))
 
     def test_real_metering_power_kept_and_retired_queue_purged(self):
         # Do not discard genuine power telemetry merely because it is

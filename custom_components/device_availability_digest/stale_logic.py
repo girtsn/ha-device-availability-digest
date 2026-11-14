@@ -169,6 +169,15 @@ def timeout_hours(group: str, labels: set[str]) -> int:
         return 168
     return {"air": 12, "ambient": 48, "electrical": 72}.get(group, 168)
 
+def is_redundant_sma_grid_import(entity_id: str, has_shm2_import: bool) -> bool:
+    """Optional inverter-side grid-import channel when a separate SHM2 exists.
+
+    The SHM2 sensor remains monitored. The stale_monitor_include label can
+    opt back in to monitoring the redundant SBSE channel.
+    """
+    return (has_shm2_import and entity_id.startswith("sensor.sbse")
+            and entity_id.endswith("_metering_power_absorbed"))
+
 
 def eligible_measurement(
     entity_id: str,
