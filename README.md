@@ -153,6 +153,16 @@ still active. Review **Availability → Stale sensors → All monitored** and
 apply explicit include/ignore labels as needed. New installations need about
 24 hours of PM2.5 observation; saved older PM2.5 samples are reused.
 
+## Optional SMA inverter-side grid-import sensor
+
+With an SBSE inverter and a separate Sunny Home Manager 2, the
+`sensor.sbse*_metering_power_absorbed` inverter-side channel is redundant
+when `sensor.shm2_em_metering_power_absorbed` exists. The stale monitor
+therefore ignores that SBSE channel automatically. The SHM2 meter remains
+monitored. No Home Assistant label is created or required. Assign
+`stale_monitor_include` if you deliberately want to monitor it.
+This never disables the entity or changes energy statistics.
+
 ## Tracker timestamps (v0.3.7)
 
 The **Home Presence → Current evidence** section lists both **People / Companion
@@ -281,6 +291,8 @@ During the initial config flow, the integration:
 - Suggests an available `notify.*` entity, preferring names containing `email`.
 - Prefills common Foscam-type switch proxies as exclusions if those entities exist.
 - Detects typical TV devices and excludes them automatically, based on device registry metadata and a media-player entity.
+- Excludes Google Cast devices by default because sleeping or powered-off devices are normal; this is configurable in Options.
+- Excludes SMA Devices Plus logical plant devices identified by source entities named `sensor.my_plant_*`, but continues to monitor physical inverters and SHM2 meters.
 - Prefers standard binary connectivity sensors when selecting a representative entity.
 - Recognizes both tado API diagnostics through their attributes, without relying on exact entity IDs.
 
@@ -292,6 +304,7 @@ For precise per-home overrides, optionally put a JSON file named `/config/device
   "offline_minutes": 5,
   "window_minutes": 20,
   "auto_exclude_tvs": true,
+  "auto_exclude_cast": true,
   "excluded_entities": ["switch.example_camera_proxy"],
   "excluded_device_entities": ["media_player.example_tv"],
   "connectivity_entities": ["binary_sensor.example_controller_online"]
