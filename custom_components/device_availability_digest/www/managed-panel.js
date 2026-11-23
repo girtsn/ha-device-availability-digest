@@ -77,7 +77,14 @@ const E=(name,text,className)=>{
   if(className)el.className=className;
   return el;
 };
-const fmt=(ts)=>{if(!ts)return "—";const d=new Date(ts);return isNaN(d)?String(ts):d.toLocaleString();};
+let avZone=h=>h?.config?.time_zone||"UTC";
+let avCivil=null,avToUtc=null,avAddDays=null;
+const fmt=(ts,hass)=>{
+  if(!ts)return "—";
+  const d=new Date(ts);
+  return isNaN(d)?String(ts):d.toLocaleString(
+    hass?.locale?.language||undefined,{timeZone:avZone(hass)});
+};
 const statusClass=(s)=>String(s||"").toLowerCase();
 const MODE_COLORS={home:"#218657",away:"#d38221",unknown:"#949ba4",unavailable:"#949ba4"};
 const modeState=value=>{
@@ -137,6 +144,8 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     this._pickerPromise=import("./availability-date-range-picker.js?v="+encodeURIComponent(version))
       .then(mod=>{
         if(typeof mod.avPresetRange!=="function")throw Error("Date range selector unavailable");
+        avZone=mod.avZone;avCivil=mod.avCivil;avToUtc=mod.avToUtc;
+        avAddDays=mod.avAddDays;
         // Constructor runs before Home Assistant injects the user profile;
         // replace the provisional browser-local range with the HA preference.
         if(this._range?.preset==="last7")
@@ -307,15 +316,15 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       piece.style.width=(fraction*100)+"%";
       piece.style.background=MODE_COLORS[segment.state];
       piece.title=modeLabel(segment.state)+" · "+
-        new Date(segment.start).toLocaleString()+" – "+
-        new Date(segment.end).toLocaleString();
+        fmt(segment.start,this._hass)+" – "+
+        fmt(segment.end,this._hass);
       if(fraction>0.13)piece.append(E("span",modeLabel(segment.state)));
       track.append(piece);
     }
     card.append(track);
     const axis=E("div",null,"chartlabels");
-    axis.append(E("span",new Date(start).toLocaleString()),
-      E("span",new Date(end).toLocaleString()));
+    axis.append(E("span",fmt(start,this._hass)),
+      E("span",fmt(end,this._hass)));
     card.append(axis);
     const legend=E("div",null,"mode-legend");
     for(const [name,label] of [["home","Home"],["away","Away"],
@@ -338,20 +347,26 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
   }
   _chart(events,matcher){
     const rangeStart=new Date(this._range.start),rangeEnd=new Date(this._range.end);
-    const startUTC=Date.UTC(rangeStart.getFullYear(),rangeStart.getMonth(),rangeStart.getDate());
-    const endUTC=Date.UTC(rangeEnd.getFullYear(),rangeEnd.getMonth(),rangeEnd.getDate());
-    const days=Math.max(1,Math.round((endUTC-startUTC)/86400000));
+    const zone=avZone(this._hass);
+    const startCivil=avCivil(rangeStart,zone);
+    const endCivil=avCivil(rangeEnd,zone);
+    const days=Math.max(1,Math.round((endCivil-startCivil)/86400000));
     const unit=days===1?"hour":days<=90?"day":days<=365?"week":"month";
     const card=this._card("Recorded "+(unit==="hour"?"hourly":unit==="day"?"daily":unit==="week"?"weekly":"monthly")+" activity",12);
     const counts=[];
     let cursor=new Date(rangeStart);
     while(cursor<rangeEnd&&counts.length<150){
-      const next=new Date(cursor);
-      if(unit==="hour")next.setTime(next.getTime()+3600000);
-      else if(unit==="day")next.setDate(next.getDate()+1);
-      else if(unit==="week")next.setDate(next.getDate()+7);
-      else next.setMonth(next.getMonth()+1);
-      if(next>rangeEnd)next.setTime(rangeEnd.getTime());
+      let next;
+      if(unit==="hour")next=new Date(cursor.getTime()+3600000);
+      else{
+        const civil=avCivil(cursor,zone);
+        const following=unit==="month"
+          ?new Date(Date.UTC(civil.getUTCFullYear(),civil.getUTCMonth()+1,
+            civil.getUTCDate()))
+          :avAddDays(civil,unit==="week"?7:1);
+        next=new Date(avToUtc(following,this._hass));
+      }
+      if(next>rangeEnd)next=new Date(rangeEnd);
       if(next<=cursor)break;
       counts.push({start:new Date(cursor),end:next,n:0,offline:0});
       cursor=new Date(next);
@@ -373,13 +388,15 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       const col=E("div",null,"barcol");
       const bar=E("div",null,"bar"+(item.offline?" alt":""));
       bar.style.height=(item.n?Math.max(3,Math.round(item.n/max*94)):0)+"px";
-      bar.title=item.start.toLocaleString()+": "+item.n+" events"+
+      bar.title=fmt(item.start,this._hass)+": "+item.n+" events"+
         (item.offline?" ("+item.offline+" confirmed offline)":"");
       col.append(bar);container.append(col);
     }
     card.append(container);
     const labels=E("div",null,"chartlabels");
-    const format=unit==="hour"?d=>d.toLocaleString():d=>d.toLocaleDateString();
+    const format=unit==="hour"?d=>fmt(d,this._hass):
+      d=>d.toLocaleDateString(this._hass?.locale?.language||undefined,
+        {timeZone:zone});
     labels.append(E("span",format(rangeStart)),E("span",format(rangeEnd)));
     card.append(labels);
     card.append(E("div",
@@ -407,7 +424,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
         event.kind==="presence_state"?"STATE":isSourceDetails(event)?"DETAILS":"SOURCE";
       left.append(this._badge(badge));
       left.append(E("span",eventTitle(event),"eventname"));
-      summary.append(left,E("time",fmt(event.at),"time"));
+      summary.append(left,E("time",fmt(event.at,this._hass),"time"));
       details.append(summary);
       const display={...event};
       if(!display.mac)delete display.mac;if(!display.ip)delete display.ip;
@@ -453,7 +470,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     ]){
       const cell=E("div");
       cell.append(E("small",title));
-      const valueEl=E("time",fmt(value));
+      const valueEl=E("time",fmt(value,this._hass));
       if(value)valueEl.dateTime=value;
       cell.append(valueEl);
       dates.append(cell);
@@ -520,7 +537,7 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
         if(item.integration&&item.integration!=="unknown"){
           left.append(E("span","via "+item.integration,"muted small"));
         }
-        s.append(left,E("span","Since "+fmt(item.since),"time"));
+        s.append(left,E("span","Since "+fmt(item.since,this._hass),"time"));
         d.append(s,E("pre",JSON.stringify(item,null,2)));current.append(d);
       }
     }
@@ -541,13 +558,13 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
       (counts.healthy||0)+" healthy · "+(counts.pending||0)+" pending"));
     const info=this._card("Monitoring status",12);
     info.append(E("div",
-      "Last scan: "+fmt(monitor.checked_at)+" · Scan interval: 15 minutes · "+
+      "Last scan: "+fmt(monitor.checked_at,this._hass)+" · Scan interval: 15 minutes · "+
       "Next regular digests: 08:00 and 20:00 (Home Assistant local time) · "+
       "Queued changes: "+(monitor.queued_events||0)+
-      " · Last accepted by notify: "+fmt(monitor.last_digest),"small"));
+      " · Last accepted by notify: "+fmt(monitor.last_digest,this._hass),"small"));
     info.append(E("div",
       "Email target: "+(monitor.notification_target||"not configured")+
-      " · Last attempt: "+fmt(monitor.last_attempt)+
+      " · Last attempt: "+fmt(monitor.last_attempt,this._hass)+
       " · Result: "+(monitor.last_attempt_success==null?"not attempted":
         monitor.last_attempt_success?"accepted by notify":"FAILED")+
       " · Daily unresolved reminder: "+(monitor.daily_reminder_enabled?"enabled":"disabled"),
@@ -652,7 +669,8 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
         this._pickerError="";this._ensurePicker();
       }));
     }
-    if(this._lastLoad)toolbar.append(E("span","Updated "+new Date(this._lastLoad).toLocaleTimeString(),"muted small"));
+    if(this._lastLoad)toolbar.append(E("span","Updated "+new Date(this._lastLoad).toLocaleTimeString(
+      this._hass?.locale?.language||undefined,{timeZone:avZone(this._hass)}),"muted small"));
     shell.append(toolbar);
     const tabs=E("div",null,"tabs");
     tabs.setAttribute("role","tablist");
