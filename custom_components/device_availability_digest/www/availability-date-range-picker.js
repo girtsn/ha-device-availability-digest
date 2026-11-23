@@ -1,8 +1,12 @@
-/* Shared Energy-style calendar picker. Dates are HA-local calendar days,
- * independent of the viewing browser's timezone (including DST transitions).
- * Civil calendar arithmetic is performed on UTC-midnight surrogate Date objects.
+/* Shared Energy-style calendar picker. Honor HA user-profile time zone:
+ * "local" = this viewing device; "server" = HA configured location.
+ * UTC-midnight surrogate civil dates preserve correct 23/25h DST boundaries.
  */
-const avZone=hass=>hass?.config?.time_zone||"UTC";
+const avZone=hass=>{
+  const server=hass?.config?.time_zone||"UTC";
+  if(hass?.locale?.time_zone!=="local")return server;
+  return Intl.DateTimeFormat().resolvedOptions().timeZone||server;
+};
 const avCivil=(instant,zone)=>{
   const values=Object.fromEntries(new Intl.DateTimeFormat("en-GB",{
     timeZone:zone,year:"numeric",month:"2-digit",day:"2-digit"
@@ -78,8 +82,20 @@ class AvailabilityDateRangePicker extends HTMLElement {
   set hass(value){
     const previous=this._hass;
     this._hass=value;
-    if((!previous||avZone(previous)!==avZone(value)||
-      avFirstWeekday(previous)!==avFirstWeekday(value))&&this._range?.preset==="week"){
+    const zoneChanged=previous&&avZone(previous)!==avZone(value);
+    if(zoneChanged&&this._range?.preset!=="last24"){
+      // Preserve the chosen *calendar dates* when a user switches between
+      // local/server time. Recompute the UTC instants for the new zone.
+      const start=avCivil(new Date(this._range.start),avZone(previous));
+      const end=avCivil(new Date(this._range.end),avZone(previous));
+      this._range={...this._range,
+        start:avToUtc(start,value),end:avToUtc(end,value)};
+      this._month=avToday(value);
+      this.dispatchEvent(new CustomEvent("date-range-changed",{
+        detail:this._range,bubbles:true,composed:true
+      }));
+    }else if((!previous||avFirstWeekday(previous)!==avFirstWeekday(value))
+      &&this._range?.preset==="week"){
       this._range=avPresetRange("week",new Date(),value);
       this._month=avToday(value);
       this.dispatchEvent(new CustomEvent("date-range-changed",{
@@ -276,4 +292,4 @@ const AV_VERSIONED_PICKER_TAG="availability-date-range-picker-v"+AV_PICKER_VERSI
 if(!customElements.get(AV_VERSIONED_PICKER_TAG))
   customElements.define(AV_VERSIONED_PICKER_TAG,class extends AvailabilityDateRangePicker {});
 
-export { avPresetRange };
+export { avPresetRange, avZone };
