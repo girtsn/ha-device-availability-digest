@@ -137,7 +137,12 @@ class AvailabilityDiagnosticsManagedPanel extends HTMLElement{
     this._pickerPromise=import("./availability-date-range-picker.js?v="+encodeURIComponent(version))
       .then(mod=>{
         if(typeof mod.avPresetRange!=="function")throw Error("Date range selector unavailable");
+        // Constructor runs before Home Assistant injects the user profile;
+        // replace the provisional browser-local range with the HA preference.
+        if(this._range?.preset==="last7")
+          this._range=mod.avPresetRange("last7",new Date(),this._hass);
         this._pickerReady=true;this._pickerError="";
+        if(this.isConnected&&this._hass)this._load();
         if(this.isConnected)this._render();
       })
       .catch(error=>{
