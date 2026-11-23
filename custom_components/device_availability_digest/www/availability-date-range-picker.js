@@ -292,4 +292,4 @@ const AV_VERSIONED_PICKER_TAG="availability-date-range-picker-v"+AV_PICKER_VERSI
 if(!customElements.get(AV_VERSIONED_PICKER_TAG))
   customElements.define(AV_VERSIONED_PICKER_TAG,class extends AvailabilityDateRangePicker {});
 
-export { avPresetRange, avZone };
+export { avPresetRange, avZone, avCivil, avToUtc, avAddDays };
